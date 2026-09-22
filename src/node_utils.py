@@ -10,7 +10,14 @@ def summarize_tech_research(tech_research: dict) -> str:
         return "(아직 기술조사 결과 없음)"
     lines = []
     for name, r in tech_research.items():
-        lines.append(f"- {name}: {r.get('overview', '')}")
+        # overview 만 넘기면 B 가 원문에서 뽑은 실험 환경·수치·한계가 C/D/E 에
+        # 도달하지 못한다. 도메인 평가(E)는 그 수치가 유일한 기술별 근거다.
+        lines.append(f"- {name}")
+        lines.append(f"  개요: {r.get('overview', '')}")
+        if r.get("scope"):
+            lines.append(f"  적용 범위(실험 환경·모델·데이터셋): {r['scope']}")
+        if r.get("limitations"):
+            lines.append(f"  논문이 밝힌 한계: {r['limitations']}")
     return "\n".join(lines)
 
 
