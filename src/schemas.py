@@ -24,7 +24,7 @@ class TechStatus(BaseModel, Generic[T]):
     - TechStatus[Literal["정식", ...]] 처럼 순수 카테고리만 필요한 자리
       (시장성 adoption_status 등)는 Pydantic이 옵션 밖 값을 바로 거부한다.
     - TechStatus[str] 처럼 카테고리 + 실측 수치를 같이 적어야 하는 자리
-      (도메인 memory_budget 등, 예: "넘는다 (1.8GB)")는 자유 문자열을 허용한다.
+      (도메인 memory_budget 등, 예: "넘는다 (N GB)")는 자유 문자열을 허용한다.
     """
     turboquant: T
     infinigen: T
@@ -154,21 +154,21 @@ class StakeholderEval(BaseModel):
 
 class DomainCriteria(BaseModel):
     memory_budget: TechStatus[str] = Field(
-        description="'들어간다 (1.2GB)'/'넘는다 (1.8GB, 예산 초과 0.3GB)'/'근거 없음' - "
-                    "카테고리 뒤 괄호에 실제 GB 수치를 반드시 같이 적는다"
+        description="'들어간다 (N GB)'/'넘는다 (N GB, 예산 초과 N GB)'/'근거 없음' - "
+                    "자료에 그 기술의 수치가 있으면 괄호에 같이 적고, 없으면 숫자를 지어내지 말고 '근거 없음'으로 적는다"
     )
     accuracy: TechStatus[str] = Field(
-        description="'나눠 보고 (NIAH -2%p, GSM8K -6%p)'/'한쪽만 보고 (GSM8K, -4%p)'/"
-                    "'뭉쳐 보고 (-4%p)'/'근거 없음' - 카테고리 뒤 괄호에 원본 대비 손실폭(%p)을 "
-                    "반드시 같이 적는다. 카테고리만 쓰고 숫자를 안 쓰면 안 된다"
+        description="'나눠 보고 (검색형 N%p, 추론형 N%p)'/'한쪽만 보고 (어느 작업, N%p)'/"
+                    "'뭉쳐 보고 (N%p)'/'근거 없음' - 카테고리 뒤 괄호에 원본 대비 손실폭(%p)을 "
+                    "자료에 그 기술의 수치가 있으면 괄호에 같이 적고, 없으면 숫자를 지어내지 말고 '근거 없음'으로 적는다"
     )
     latency: TechStatus[str] = Field(
-        description="'이 조건 실측 (토큰당 45ms)'/'다른 조건 실측 (배치8에서 30ms)'/"
-                    "'근거 없음' - 카테고리 뒤 괄호에 실제 ms 수치를 반드시 같이 적는다"
+        description="'이 조건 실측 (토큰당 N ms)'/'다른 조건 실측 (어떤 조건, N ms)'/"
+                    "'근거 없음' - 자료에 그 기술의 수치가 있으면 괄호에 같이 적고, 없으면 숫자를 지어내지 말고 '근거 없음'으로 적는다"
     )
     power_thermal: TechStatus[str] = Field(
-        description="'실측 있음 (평균 3.2W, 10분 후 20% 스로틀링)'/'근거 없음' - "
-                    "실측 있음이면 괄호에 W·% 수치를 반드시 같이 적는다"
+        description="'실측 있음 (평균 N W, N분 후 N% 스로틀링)'/'근거 없음' - "
+                    "자료에 그 기술의 수치가 있으면 괄호에 같이 적고, 없으면 숫자를 지어내지 말고 '근거 없음'으로 적는다"
     )
 
 
@@ -193,11 +193,14 @@ class DomainEval(BaseModel):
     notes: str = Field(
         default="",
         description=(
-            "criteria의 각 판정마다 왜 그렇게 판단했는지 근거를 정리한다. 예: "
-            "'메모리 예산 - TurboQuant: 압축 후 1.2GB로 예산(1.5GB) 안에 들어감"
-            "(논문 Table 1). InfiniGen: 호스트 DRAM 오프로딩이 전제인데 기준 "
-            "기기엔 별도 호스트 DRAM이 없어 논문 조건 자체가 성립 안 함.' "
-            "항목마다 근거 없으면 그것도 적는다."
+            "criteria의 각 판정마다 왜 그렇게 판단했는지 근거를 정리한다. "
+            "형식: '<항목명> - <기술명>: <판정>. 근거는 <문헌명>의 <어느 부분>. "
+            "<기술명>: <판정>. 근거는 ...' "
+            "근거는 반드시 [검색된 도메인 평가 논문 원문]이나 [참고: 기술 개요]에 "
+            "실제로 있는 문장·수치만 쓴다. 이 프롬프트의 예시나 필드 설명에 적힌 "
+            "숫자를 근거로 삼지 마라 - 그건 형식을 보여 주는 자리표시자다. "
+            "해당 기술의 수치를 자료에서 못 찾았으면 반드시 '근거 없음'이라고 "
+            "적고, 어느 자료를 찾아봤는지 함께 밝힌다. 추정치를 지어내지 않는다."
         ),
     )
 
