@@ -20,7 +20,8 @@ def make_node_b(llm, tech_retriever, web_search_tool):
         ]
         all_docs = []
         for q in queries:
-            all_docs.extend(tech_retriever.invoke(q))
+           docs = tech_retriever.invoke(q)
+           all_docs.extend(docs[:5])   # 검색어 하나당 최대 5개로 미리 제한
         context = format_docs_for_prompt(all_docs, max_docs=10)
 
         deployment_search_results = run_web_search(
@@ -34,6 +35,12 @@ def make_node_b(llm, tech_retriever, web_search_tool):
         prompt = prompts.TECH_RESEARCH_PROMPT.format(
             context=context, deployment_search_results=deployment_search_results
         )
+        prompt += (
+           "\n\n[추가 유의사항] 'offloading' 방식이라도 실험 환경이 GPU 서버 + "
+           "호스트 CPU 메모리라면 이는 데이터센터 환경이지 온디바이스가 아니다. "
+           "온디바이스로 인정하려면 스마트폰·임베디드 보드·통합 메모리 노트북에서의 "
+           "실측/배포 근거가 있어야 한다."
+       )
         result = structured_llm.invoke(prompt)
 
         refs = [
@@ -51,3 +58,4 @@ def make_node_b(llm, tech_retriever, web_search_tool):
         }
 
     return node_b_tech_research
+
