@@ -48,7 +48,7 @@ def load_and_split(paths: dict[str, Path]) -> list[Document]:
         if not path.exists():
             missing.append(str(path))
             continue
-        loader = PDFPlumberLoader(str(path))
+        loader = PDFPlumberLoader(str(path), text_kwargs={"layout": True})
         loaded = loader.load()
         for d in loaded:
             d.metadata["source_name"] = name

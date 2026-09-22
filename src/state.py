@@ -34,7 +34,7 @@ class GraphState(TypedDict, total=False):
     stakeholder_references: list[Reference]
 
     # E. 도메인 평가 (단독 작성 - reducer 불필요)
-    domain_eval: dict  # schemas.DomainEval 구조 (operating_point_a/b 안에 DomainCriteria 중첩)
+    domain_eval: dict  # schemas.DomainEval 구조 (criteria: DomainCriteria 하나 + reversal_* 서술)
     domain_references: list[Reference]
 
     # F. 평가 종합
