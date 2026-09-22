@@ -124,19 +124,24 @@ REQUIRED_CHAPTERS = ['SUMMARY', '시장', '이해관계자', '도메인', 'REFER
 FORBIDDEN_WORDS = ['우수', '우월', '우위', '권장', '추천']
 RANKING_CHECK_CHAPTERS = ['관점별 평가', '시장', '이해관계자', '도메인', '시사점']
 
-# 장 제목 유무만 보던 이전 판은 "### 시장 관점" 같은 줄글 보고서를 첫 판에
-# 통과시켰다. REPORT_PROMPT가 요구하는 개조식·[소결]·번호 인용이 실제로
-# 지켜졌는지까지 봐야 G<->H 루프가 형식 드리프트를 교정할 수 있다.
 PERSPECTIVE_CHAPTERS = ['시장', '이해관계자', '도메인']
-MIN_SUMMARY_BLOCKS = 3   # 4.1 / 4.2 / 4.3 각 장 끝의 [소결]
-MIN_BULLET_LINES = 15    # 4장 전체에서 '- ' 로 시작하는 줄
-MIN_NUMBERED_REFS = 5    # REFERENCE 의 '[n] ...' 항목 (고정 논문 5건이 하한)
-
-FORMAT_PREFIX = "형식 위반: "
+MIN_SUMMARY_BLOCKS = 3
+MIN_BULLET_LINES = 15
+MIN_NUMBERED_REFS = 5
+FORMAT_PREFIX = '형식 위반: '
 
 
 def _check_format(report, chapters):
-    """개조식·[소결]·번호 인용이 실제로 지켜졌는지 본다."""
+    """개조식·[소결]·번호 인용이 실제로 지켜졌는지 본다.
+
+    장 제목 유무만 보던 이전 판은 "### 시장 관점" 같은 줄글 보고서를 첫 판에
+    통과시켰다. REPORT_PROMPT가 요구하는 개조식·[소결]·번호 인용이 실제로
+    지켜졌는지까지 봐야 G<->H 루프가 형식 드리프트를 교정할 수 있다.
+
+    임계값 - MIN_SUMMARY_BLOCKS: 4.1/4.2/4.3 각 장 끝의 [소결] 개수.
+    MIN_BULLET_LINES: 4장 전체에서 '- ' 로 시작하는 줄 수.
+    MIN_NUMBERED_REFS: REFERENCE 의 '[n] ...' 항목 수(고정 논문 5건이 하한).
+    """
     import re
 
     problems = []
@@ -254,4 +259,3 @@ def route_after_h(state):
     if validation.get("is_valid", False):
         return "END"
     return "G"
-
