@@ -1,0 +1,14 @@
+langgraph
+langchain
+langchain-core
+langchain-community
+langchain-classic
+langchain-openai
+langchain-huggingface
+langchain-tavily
+pydantic
+python-dotenv
+pdfplumber
+rank_bm25
+faiss-cpu
+sentence-transformers

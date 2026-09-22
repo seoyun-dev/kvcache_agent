@@ -1,0 +1,26 @@
+data/
+data/papers/*.pdf
+data/faiss_index/
+output/
+.venv/
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Python
+*.pyc
+.python-version
+__pycache__/
+.venv/
+venv/
+
+# Env & secrets
+.env
+.env.*
+
+# OS / Editor 
+.DS_Store
+.vscode/
+
+# 환경 스캐폴딩 
+pyproject.toml
+uv.lock
