@@ -109,4 +109,3 @@ def make_node_d(llm, web_search_tool):
         }
 
     return node_d_stakeholder_eval
-

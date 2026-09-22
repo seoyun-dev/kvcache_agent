@@ -34,4 +34,3 @@ def make_node_e(llm, domain_retriever):
         return {"domain_eval": result.model_dump(), "domain_references": refs}
 
     return node_e_domain_eval
-

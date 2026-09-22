@@ -58,4 +58,3 @@ def make_node_b(llm, tech_retriever, web_search_tool):
         }
 
     return node_b_tech_research
-
