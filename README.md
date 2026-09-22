@@ -1,144 +1,205 @@
-# KV Cache 최적화 기술 다관점 평가 — MVP 코드
+# README.md
 
-3번 그래프 설계(안) 그대로 짠 LangGraph 멀티에이전트 코드다.
-`A -> B -> {C,D,E} -> F -> G <-> H` 여덟 노드, BM25+FAISS Hybrid(RRF), 리랭커·근거검증(B'/E') 없는 MVP 스코프.
+## Subject
 
-**노트북 기반으로 짜서 분업이 가능하다** — 사람마다 노드 하나(또는 묶음) 담당 노트북을 열어서
-독립적으로 프롬프트 고치고 테스트하고, 마지막 셀에서 그 결과를 `src/nodes_*.py`로 저장한다.
-누가 뭘 고치든 다른 사람 파일은 안 건드리니 동시에 작업해도 충돌이 없다.
+본 프로젝트는 KV cache 최적화 기술을 소프트웨어, 하드웨어 두 진영에서 선정하여, 시장·이해관계자·도메인 관점에서 평가하는 Agentic RAG를 개발하는 프로젝트이다.
 
-## 구조
+## Domain Background
+
+2026년 들어 온디바이스 AI는 1월 CES부터 6월 WWDC까지 이어지는 5대 글로벌 컨퍼런스의 공통 의제로 자리 잡았다.
+
+Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를 재설계하며 클라우드로 질의를 보내는 대신 기기가 먼저 이해하고 판단하는 구조로의 전환을 알렸고, Samsung은 연말까지 약 2억 대의 갤럭시 AI 폰에 실시간 번역과 생성형 이미지 편집을 탑재하겠다고 발표했다. IDC는 2025년 GenAI 스마트폰 출하량이 3억 7천만 대를 넘어 전체 스마트폰의 약 30%를 차지할 것으로 전망했다.
+
+이 흐름의 근본 제약은 메모리다. 클라우드 GPU와 달리 스마트폰·엣지 기기는 배터리, 발열, 제한된 RAM 안에서 LLM을 구동해야 하는데, 컨텍스트가 길어질수록 KV cache가 모델 가중치보다 더 큰 메모리를 요구하는 구조적 병목이 있다. 업계에서 이르면 2026년 모바일 HBM 시장이 열릴 것이라는 전망이 나올 만큼, 온디바이스 메모리 병목 해소는 반도체 업계 전체의 화두가 되어 있다.
+
+이것이 이론적 논의에 그치지 않는다는 근거로 두 가지 실사용 사례를 확인했다.
+
+- Apple의 온디바이스 VLM 프레임워크 MLX-VLM은 이미 TurboQuant 기반 KV cache 압축을 4비트 양자화와 함께 지원 기능으로 포함시켰다. 소프트웨어 압축 접근이 실제 온디바이스 제품 생태계에 편입되고 있다는 뜻이다.
+- 2026년 3월 24일 Google이 TurboQuant를 ICLR 2026 채택 논문으로 발표하며 AI 메모리 효율의 돌파구로 소개하자, 그 다음 날 삼성전자와 SK하이닉스 주가가 각각 4.8%, 5.9% 하락했다는 보도가 나왔다. KV cache 압축 기술 하나가 국내 메모리 반도체 업계 주가에까지 영향을 미쳤다.
+
+그래서 본 프로젝트는 이 병목을 서로 다른 철학으로 푸는 두 기술, 곧 캐시 자체를 줄이는 압축과 메모리 계층을 넓히는 오프로딩을 같은 기준 위에 놓고 비교한다. 평가 도메인은 OnDevice AI이다. 자원 제약과 전력 민감이 겹쳐 관점에 따라 평가가 가장 크게 갈리는 환경이기 때문이다.
+
+## Selected Technologies
+
+선정 기준은 개입 시점을 배포 단계로 한정한 것이다. KV cache 최적화는 학습 단계에서 아키텍처를 재설계하는 방식(DeepSeek-V2의 MLA 등)과 학습이 끝난 모델에 사후 적용하는 방식으로 나뉜다. 아래 두 기술은 재학습 없이 임의의 사전학습 모델에 적용 가능해 같은 개입 시점을 전제로 한 공정 비교가 성립한다.
+
+- SW : TurboQuant (압축, 비트폭 가변 양자화 / 품질 무손실 기준 3.5비트, KV cache 압축 목적으로는 2.5~3.5비트 구간을 논문에서 제시, Apple MLX-VLM은 4비트 설정으로 채택)
+  - 경쟁 후보 KIVI가 비대칭 2비트 양자화라는 특정 설정의 경험적 유효성을 제시하는 데 그치는 반면, TurboQuant는 Shannon 소스 코딩 이론의 정보이론적 하한에 얼마나 근접하는지를 수학적으로 증명하며 2.5~3.5비트 전 구간에서 근사 최적 왜곡률을 보장한다.
+  - ICLR 2026 채택, Apple MLX-VLM 실채택, 발표 직후의 시장 반응까지 확인되어 현시점 산업적 화제성이 가장 뚜렷하다. DeepSeek-V2는 학습 단계 개입이라 위 기준으로 제외했다.
+
+- HW : InfiniGen (메모리 오프로딩, 선택적 KV 프리페치)
+  - 다음 레이어의 attention 패턴을 미리 예측해 필요한 KV 항목만 선택적으로 프리페치하는 방식으로, 특수 하드웨어 없이 순수 소프트웨어 메커니즘만으로 host 메모리 오프로딩 문제를 해결한다.
+  - 함께 검토한 ITME와 PIM/CXL은 각각 GPU 서버 간 RDMA 분산 스토리지와 CXL 3.0 메모리 풀링을 전제한다. 둘 다 스마트폰·엣지 기기에 물리적으로 존재하지 않는 하드웨어를 요구해 온디바이스 실운용 환경 게이트를 통과하지 못한다. InfiniGen은 CPU·GPU·NPU가 메모리를 공유하는 모바일 SoC의 계층형 메모리 구조에도 개념적으로 이식 가능해, 하드웨어 후보 셋 중 유일하게 온디바이스 도메인에서 원리 수준의 논의가 가능하다.
+
+평가 도메인은 OnDevice AI이며, 기준 기기는 RAM 8GB 스마트폰이다. 앱 몫 4GB에서 탑재 LLM(Qwen3-4B, 4비트) 가중치 2.5GB를 뺀 1.5GB를 KV cache 예산으로 잡는다.
+
+## Overview
+
+- Objective : 하나의 기술을 복수 관점에서 비교 평가
+- Method : Multi-Agent(Distributed) + Advanced RAG
+- Tools : RAG 검색(BM25 + FAISS Hybrid, RRF), Web Search(Tavily), 규칙 기반 보고서 검증
+
+## Features
+
+- PDF 자료 기반 정보 추출
+  - 논문 5편 93쪽을 PdfPlumber로 추출해 단일 계층으로 청킹한 뒤 BM25와 FAISS 인덱스를 병렬 구축한다.
+  - 기술조사 에이전트는 선정 기술 원문 2편(43쪽)을, 도메인 평가 에이전트는 도메인 기준 문헌 3편(50쪽)을 각각 별도 리트리버로 읽는다.
+- 웹 검색 기반 시장·이해관계자 평가
+  - 논문에 없는 배포·채택·발화 근거는 Tavily 검색으로 수집한다.
+- 보고서 자동 검증 루프
+  - 생성된 보고서에 필수 장이 있는지, 개조식과 소결 블록과 번호 인용 형식을 지켰는지, 금칙 표현이 들어갔는지를 규칙으로 검사해 위반 시 재작성을 지시한다.
+  - 최대 2회까지 재시도하고 상한에 도달하면 검증 실패 사실을 담은 감사 기록을 보고서 안에 남긴 채 종료한다. 검증에 실패한 보고서가 통과 표시로 제출되는 일을 막기 위한 장치다.
+
+### 확증 편향 방지 전략
+
+평가가 한쪽으로 기우는 것을 막기 위해 네 가지를 설계에 넣었다.
+
+- 대칭 질의: 시장성과 이해관계자 에이전트는 질의 템플릿 한 벌을 두 기술에 기술명만 바꿔 던진다. 한쪽에만 비판을 묻거나 한쪽에만 지지를 묻는 구조가 생기지 않게 하기 위함이다. 이해관계자 평가는 지지 방향과 비판 방향을 두 기술 모두에 같은 문형으로 던져 찬반 대칭까지 맞춘다.
+- 근거 소유권 분리: 문서·저장소·규격의 기록은 시장성 관점이, 사람의 발화는 이해관계자 관점이 소유한다. 같은 사실을 두 관점이 각각 근거로 세어 한 근거가 두 번 반영되는 일을 막는다.
+- 근거 없음을 열세로 쓰지 않음: 근거를 찾지 못하면 근거 없음으로 적고 판정에서 불리하게 쓰지 않는다. 종합 단계에서 항목별로 두 기술의 근거 유무를 나란히 기록해, 근거 없음이 한쪽에만 몰렸으면 그 자체를 편향 신호로 드러낸다.
+- 우열 어휘 금지: 관점별 판정과 종합 서술에 우수, 우월, 우위, 권장, 추천을 쓰지 않는다. 관점 단위 승자 필드를 두지 않고, 대신 압축 유리 조건 / 확장 유리 조건 / 조건 의존 / 차이 없음 / 판단보류 다섯 값으로 방향만 요약한다. 정형 필드는 두 기술 값을 나란히 적게 강제하는 공통 구조로 통일해, 한쪽만 채운 출력이 스키마 단계에서 나올 수 없게 했다. 보고서 검증 노드가 관점별 평가와 시사점 장에서 금칙 표현을 실제로 검사한다.
+
+## Tech Stack
+
+- Framework : LangGraph
+- LLM/Generator : gpt-4.1 (기술조사, 도메인 평가, 보고서 생성)
+- LLM/Judge : gpt-4.1-mini (시장성, 이해관계자, 평가 종합)
+- Retrieval : BM25 top-20과 FAISS Dense top-20을 RRF로 병합해 top-5 사용, 리랭커 없음
+- Embedding : Qwen/Qwen3-Embedding-0.6B
+
+LLM을 두 모델로 나눈 이유는 노드별 난이도가 다르기 때문이다. 시장성과 이해관계자 판정은 웹 검색 결과를 정해진 카테고리 값으로 분류하는 작업이라 mini로 충분한 반면, 기술조사와 도메인 평가는 원문 논문을 읽고 다단계로 추론해야 하고 보고서 생성은 네 관점 결과를 하나의 일관된 문서로 조립해야 해 품질 손실 위험이 크다.
+
+임베딩 모델은 MTEB Leaderboard(Multilingual: Korean·English) 기준으로 골랐다. 본 설계는 sparse 트랙을 BM25로 별도 운용하므로 dense 단독 측정치인 Retrieval 점수가 실제 사용 조건과 일치하는데, 이 조건에서 Qwen3-Embedding-0.6B는 32위(60.46), bge-m3는 79위(53.63)로 격차가 있다. 같은 계열 4B가 점수는 더 높으나 파라미터가 6배 이상 커 재인덱싱 속도를 고려해 0.6B를 선정했다.
+
+## Agents
+
+| Agent | 도구 | 선행 노드 | 하는 일 |
+|---|---|---|---|
+| A. 기술 선정 | Human 기반 | START | 선정 기술과 평가 도메인을 상수로 확정 |
+| B. 기술조사 | RAG + 보조 Web Search | A | 선정 기술 원문 2편(43쪽)을 읽어 개요·적용 범위·한계를 뽑고 TRL을 판정. 1~6단계는 원문으로, 공식 배포와 상용 지원에 해당하는 7~9단계만 웹 검색 2건을 보조로 쓴다 |
+| C. 시장성 평가 | Web Search | B | 시장 규모·성장성, 상용화·채택 현황, 생태계 지지, 표준화 유무를 판정 |
+| D. 이해관계자 평가 | Web Search | B | 경쟁 기술 진영, 도입 기업·개발자, 투자 업계가 각각 무엇이라고 말했는지를 판정 |
+| E. 도메인 평가 | RAG | B | 도메인 기준 문헌 3편(50쪽)을 근거로 메모리 예산, 정확도, 지연, 전력·발열 네 항목을 기술당 판정하고 작동점 간 역전 여부를 서술 |
+| F. 평가 종합 | 없음 | C, D, E | 네 관점 라벨을 모아 상충 지점을 명시적으로 드러낸다 |
+| G. 보고서 생성 | 없음 | F 또는 H 재진입 | 네 관점의 판정과 원자료, 네 갈래 참고문헌을 합쳐 보고서를 조립 |
+| H. 보고서 검증 | 규칙 기반 | G | 필수 장, 개조식·소결·번호 인용 형식, 금칙 표현을 검사. 무효면 G로 되돌린다 |
+
+TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목차의 관점별 평가에는 시장, 이해관계자, 도메인만 있고 TRL은 기술 개요 장에 속하기 때문이다. TRL 5부터는 환경 게이트를 걸어, 온디바이스 기기에서 측정한 것과 온디바이스 런타임에 들어간 것만 인정해 값을 다시 매긴다.
+
+## Architecture
+
+```mermaid
+graph TD;
+	__start__([__start__]):::first
+	A(A. 기술 선정)
+	B(B. 기술조사)
+	C(C. 시장성)
+	D(D. 이해관계자)
+	E(E. 도메인)
+	F(F. 평가 종합)
+	G(G. 보고서 생성)
+	H(H. 보고서 검증)
+	__end__([__end__]):::last
+	__start__ --> A;
+	A --> B;
+	B --> C;
+	B --> D;
+	B --> E;
+	C --> F;
+	D --> F;
+	E --> F;
+	F --> G;
+	G --> H;
+	H -. 재작성 .-> G;
+	H -. 통과 .-> __end__;
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+### 전처리 파이프라인 (B·E가 공유)
+
+```mermaid
+graph LR;
+	P["논문 PDF"] --> L["PDFPlumberLoader<br/>layout=True"]
+	L --> S["RecursiveCharacterTextSplitter<br/>chunk 1200자 · overlap 200자"]
+	S --> K["BM25Retriever<br/>sparse 인덱스"]
+	S --> M["Qwen3-Embedding-0.6B"]
+	M --> V["FAISS<br/>dense 인덱스"]
+```
+
+### 검색 파이프라인
+
+```mermaid
+graph LR;
+	Q["질의"] --> K["BM25 top-20"]
+	Q --> V["FAISS Dense top-20"]
+	K --> R["EnsembleRetriever<br/>RRF 병합 (가중치 0.5 · 0.5)"]
+	V --> R
+	R --> T["top-5 컨텍스트"]
+```
+
+## Directory Structure
 
 ```
-notebooks/
-  01_agent_B_tech_research.ipynb              B (기술조사, RAG) → src/nodes_b.py 생성
-  02_agent_CD_market_stakeholder.ipynb         C, D (시장/이해관계자, WebSearch) → src/nodes_cd.py 생성
-  03_agent_E_domain.ipynb                      E (도메인, RAG) → src/nodes_e.py 생성
-  04_agent_FGH_synthesis_report_validate.ipynb F,G,H (종합/보고서/검증) → src/nodes_fgh.py 생성
-  05_full_graph_run.ipynb                      위 네 파일을 모아 그래프 조립 + 실제 실행
-src/
-  config.py       문서 경로, 모델 이름, 선정 기술, 재시도 상한 등 전역 설정
-  state.py        3-3절 State Schema (TypedDict)
-  schemas.py      각 에이전트 구조화 출력 (Pydantic) - TechStatus 공통 패턴
-  ingest.py       전처리+검색 파이프라인 (3-4절 mermaid)
-  prompts.py      2절 판정 기준을 옮긴 프롬프트
-  node_utils.py   여러 노트북이 같이 쓰는 작은 헬퍼 2개 (웹검색 실행, tech_research 요약)
-  nodes_b.py      노트북 01이 생성 (직접 고치지 말 것)
-  nodes_cd.py     노트북 02가 생성
-  nodes_e.py      노트북 03이 생성
-  nodes_fgh.py    노트북 04가 생성
-  graph.py        3-4절 메인 그래프 배선 - 위 4개 파일을 import해서 조립
-main.py           노트북 없이 한 번에 끝까지 돌리는 진입점 (05번 노트북과 동일한 일)
-tests/
-  test_graph_wiring.py   가짜 LLM으로 그래프 배선만 검증 (API 키 불필요)
-scripts/
-  download_papers.sh     5개 PDF 다운로드 헬퍼
-validate_notebooks.py    다섯 노트북을 한 번에 다시 실행해서 안 깨졌는지 확인하는 스크립트
+├── data/papers/            대상 논문 5편 (스크립트로 내려받는다, 저장소에 없음)
+├── notebooks/              에이전트별 개발 노트북 (각 노드의 원본)
+│   ├── 01_agent_B_tech_research.ipynb
+│   ├── 02_agent_CD_market_stakeholder.ipynb
+│   ├── 03_agent_E_domain.ipynb
+│   ├── 04_agent_FGH_synthesis_report_validate.ipynb
+│   └── 05_full_graph_run.ipynb
+├── src/
+│   ├── config.py           문서 경로, 모델 이름, 선정 기술, 분석 배경 문단
+│   ├── state.py            State Schema
+│   ├── schemas.py          에이전트 구조화 출력 (Pydantic)
+│   ├── prompts.py          평가 기준을 옮긴 프롬프트
+│   ├── ingest.py           전처리와 하이브리드 검색 파이프라인
+│   ├── node_utils.py       노트북 공용 헬퍼
+│   ├── nodes_b.py          노트북 01이 생성
+│   ├── nodes_cd.py         노트북 02가 생성
+│   ├── nodes_e.py          노트북 03이 생성
+│   ├── nodes_fgh.py        노트북 04가 생성
+│   └── graph.py            그래프 배선
+├── output/                 평가 결과 저장
+├── scripts/download_papers.sh
+├── main.py                 실행 스크립트
+└── README.md
 ```
 
-## 분업 추천
+노드 구현은 노트북이 원본이고 `src/nodes_*.py`는 생성물이다. 각 노트북 마지막 저장 셀이 그 노트북에서 정의한 함수를 그대로 긁어 해당 .py를 통째로 다시 쓴다. 그래서 `src/nodes_*.py`를 직접 고치면 다음에 누군가 저장 셀을 실행할 때 그 수정이 사라진다. 고칠 일이 있으면 노트북에서 고치고 저장 셀을 다시 실행할 것. 저장 셀은 덮어쓰기 전후의 최상위 심볼을 비교해 사라진 이름이 있으면 경고를 찍는다.
 
-| 노트북 | 뭘 담당하나 | 잘 맞는 사람 |
-|---|---|---|
-| 01 (B, 기술조사) | RAG 리트리버 + TRL 판정 프롬프트 | RAG 파이프라인 이해한 사람 |
-| 02 (C, D 시장/이해관계자) | 웹서치 프롬프트 2개, 구조 단순 | 프롬프트 다듬는 데 익숙한 사람 |
-| 03 (E, 도메인) | 01과 같은 RAG 패턴 재사용 | 01 담당자와 짝, 또는 그 다음으로 |
-| 04 (F, G, H) | 종합/보고서/규칙기반 검증, 셋이 이어짐 | 전체 그림 잡고 있는 사람 |
-| 05 (조립) | 넷 다 끝난 뒤 import해서 실행 | 아무나, 제일 먼저 끝난 사람 |
-
-**각 노트북은 완전히 독립적으로 실행 가능하다.** 01~04 아무 순서로나, 동시에 열어서 작업해도 된다.
-05번만 넷이 다 저장을 마친 뒤에 돌아간다(정확히는 05번 셀에서 그 시점까지 저장된 파일을 그대로 가져다 씀 — 넷 중 하나가 아직 저장 전이면 import 에러가 나면서 어느 파일이 없는지 바로 알려준다).
-
-**노트북을 고쳤으면 그 노트북 맨 마지막 "파일로 저장" 셀을 다시 실행해야 한다.** 안 그러면 05번(또는 `main.py`)은 예전 버전을 계속 쓴다.
-
-## 이미 검증된 것 (이 코드를 짠 샌드박스에서 실제로 돌려봄)
-
-- `pip install -r requirements.txt` 기준 모든 import 정상 동작 확인
-  (langgraph 1.2.12, langchain 1.4.2 — 실습 코드와 같은 최신 패턴:
-  `init_chat_model`, `langchain_classic.retrievers.EnsembleRetriever` 등)
-- **노트북 5개 전부**: `python validate_notebooks.py`로 각 노트북의 셀을 실제로 실행해서 확인.
-  실제 PDF·API 키가 필요한 셀만 건너뛰고(리트리버 구축, 실제 LLM 호출), 나머지는 전부 돌려봄:
-  - 01~04: 함수 정의 → 가짜 LLM/리트리버로 배선 테스트 → `src/nodes_*.py` 저장까지 성공
-  - 05: 넷이 저장한 파일을 실제로 import해서 `build_graph()`로 조립 → 가짜 데이터로
-    A→B→{C,D,E}→F→G→H 전체 실행까지 성공 (mermaid 출력도 3-4절 구조와 일치 확인)
-- **그래프 배선**: `python -m tests.test_graph_wiring` 통과.
-  - fan-out(B→C,D,E)·fan-in(C,D,E→F) 정상 동작
-  - `tech_references`/`market_references`/`stakeholder_references`/`domain_references`가
-    각 노드 전용 키로 분리되어 있어 reducer 없이도 충돌 없이 누적됨을 확인
-  - H→G 재시도 루프가 실제로 챕터 누락을 잡아서 재생성시킴, 상한(2회) 도달 시 `forced_pass=True`로 강제 종료
-- 청킹 로직: TurboQuant 논문 실제 텍스트로 `RecursiveCharacterTextSplitter` 동작 확인
-- BM25+FAISS+RRF 하이브리드 검색: 가짜 임베딩으로 `EnsembleRetriever` 배선 확인
-- PDF 파일이 없을 때 에러 메시지가 명확한지 확인 (`data/papers/`에 뭘 넣어야 하는지 바로 알려줌)
-
-## 아직 못 돌려본 것 (이 샌드박스가 인터넷이 막혀 있어서)
-
-1. **실제 PDF 다운로드** — arxiv.org 접근이 이 개발 환경에서 막혀 있음.
-   `scripts/download_papers.sh`를 팀 로컬에서 실행해서 `data/papers/`를 채울 것.
-2. **Qwen3-Embedding-0.6B 실제 다운로드·추론** — huggingface.co 접근이 막혀
-   있어서 `HuggingFaceEmbeddings(...)`를 실제로 호출해본 적은 없음. import
-   자체는 되고 API 사용법도 표준 패턴이라 크게 걱정할 부분은 아니지만, 처음
-   실행할 때 모델(약 1.2GB) 다운로드로 몇 분 걸릴 수 있다.
-3. **실제 OpenAI/Tavily API 호출** — 키가 없어서 구조화 출력(`with_structured_output`)이
-   실제 모델 응답에서도 스키마대로 잘 나오는지는 못 봤다. 프롬프트가 스키마
-   설명과 어긋나면 첫 실행에서 파싱 에러가 날 수 있음 — 이건 각자 담당 노트북의
-   "5. 실제 LLM 테스트" 셀에서 바로 확인 가능하고, 보통 프롬프트 문구를 조금
-   다듬는 정도로 해결됨. **에러가 나면 그 노드 담당자만 자기 노트북을 열어
-   고치면 되지, 다른 사람 작업을 기다릴 필요가 없다** — 이게 노트북 분리 구조의 핵심 이점.
-4. **PDFPlumberLoader가 실제 논문 PDF(2단 레이아웃 포함)를 얼마나 깔끔하게
-   뽑는지** — 텍스트만 뽑아서 청킹하는 로직은 검증했지만, 실제 바이너리 PDF를
-   태워본 적은 없다.
-
-## 실행 순서
+## Usage
 
 ```bash
-cd kv-cache-agent
-pip install -r requirements.txt --break-system-packages   # 필요시
-cp .env.example .env                                       # OPENAI_API_KEY, TAVILY_API_KEY 채우기
-bash scripts/download_papers.sh                             # data/papers/ 채우기
+pip install -r requirements.txt
+bash scripts/download_papers.sh
 ```
 
-그다음 둘 중 하나:
+저장소 루트에 `.env`를 만들어 키 두 개를 채운다.
 
-**(A) 노트북으로, 분업해서** — 각자 01~04번 중 담당 노트북을 열어서 위에서 아래로 순서대로 실행(Run All).
-"4. 배선 테스트"까지는 API 키 없이도 확인 가능하다. "5. 실제 LLM 테스트"부터는 `.env`가 채워져 있어야 실제로 돈다.
-마지막 "파일로 저장" 셀까지 실행하면 `src/nodes_*.py`가 만들어진다(또는 갱신된다).
-넷 다 끝나면 `05_full_graph_run.ipynb`를 열어서 위에서 아래로 실행.
+```
+OPENAI_API_KEY=...
+TAVILY_API_KEY=...
+```
 
-**(B) 한 번에** — 노트북 없이 터미널에서:
+### 한 번에 전체 실행
+
+한 번에 끝까지 돌리려면 다음을 쓴다.
+
 ```bash
-python validate_notebooks.py    # 배선 재확인 (선택, API 키 불필요)
-python main.py                   # 실제 실행 (이미 만들어진 src/nodes_*.py를 그대로 씀)
+python main.py
 ```
 
-성공하면 `output/final_report.md`에 보고서가 생성된다.
+### 노드별 실습
 
-## 시간 없을 때 자를 수 있는 곳
+노드별로 나눠 보려면 notebooks/01~04를 각각 열어 위에서 아래로 실행한다. 배선 테스트 셀까지는 API 키 없이 돌아가고 실제 LLM 테스트 셀부터 키가 필요하다. 넷 다 저장을 마친 뒤 notebooks/05를 열면 전체 그래프를 조립해 실행한다. 05의 배선 재확인 셀은 가짜 객체로 전 구간을 돌려보므로 키 없이도 그래프가 성한지 확인할 수 있다.
 
-- E(도메인) 노드를 건너뛰면 그래프가 더 빨리 돈다 — `05_full_graph_run.ipynb`(또는 `main.py`)의
-  그래프 조립 부분에서 `g.add_node("E", ...)`와 `g.add_edge("B","E")`/`g.add_edge("E","F")`를
-  주석 처리. F의 `domain_eval` 참조는 `.get(..., {})` 기본값이 이미 안전하게 처리하므로 에러는 안 남.
-- `config.MAX_RETRY_H = 0`으로 낮추면 H가 한 번 실패해도 바로 END로 감
-  (재시도 루프 자체를 끄는 효과, 디버깅 사이클을 줄이고 싶을 때).
+실행이 끝나면 `output/final_report.md`에 보고서가 생성된다.
+첫 실행은 임베딩 모델(약 1.2GB)을 내려받느라 몇 분 걸릴 수 있다.
 
-## 설계로 정한 것 — TRL 7~9는 B가 함부로 안 매긴다
+## Contributors
 
-B(기술조사)는 원문 논문만 RAG로 보고, TRL 7~9(공식 배포·상용 지원) 판정에만
-아주 좁은 웹 검색 2건을 보조로 쓴다. 1~6단계는 논문이 자기 실험을 스스로
-보고하니 판단 가능하지만, 7~9는 논문이 쓰인 "이후"에 일어나는 일이라 원문에
-없을 수밖에 없다. C가 하는 "채택 현황" 검색과 질문 형태가 달라(C는 두 기술
-비교, B는 기술별 개별 배포 사실) 중복이 아니고, 그래프 순서상 B가 C보다 먼저
-끝나 C 결과를 재사용할 수도 없다. `01_agent_B_tech_research.ipynb`의
-TECH_RESEARCH_PROMPT에 "원문·검색 결과에 배포 사실이 직접 없으면 7~9로
-매기지 말고 not_found로 남겨라"를 명시했다.
-
-## 시간 남으면 이어붙일 것 (3-2절 "시간 남으면 추가" 표 그대로)
-
-- **B'/E' (LLM-as-Judge 근거검증)**: `01_agent_B_tech_research.ipynb`(또는 `03_...E_domain.ipynb`)에
-  `make_node_b_verify(llm)` 같은 함수를 같은 패턴으로 추가하고 저장한 뒤,
-  `src/graph.py`에서 B→B'→{C,D,E} 조건부 엣지로 바꾸면 된다.
-  `route_after_h`와 똑같은 패턴(조건부 함수 + `add_conditional_edges`)을 재사용하면 됨.
-- **리랭커(`bge-reranker-v2-m3`)**: `src/ingest.py`의 `build_hybrid_retriever`에서
-  `EnsembleRetriever` 결과를 받아 CrossEncoder로 한 번 더 정렬하는 단계만
-  추가하면 됨. 리트리버 인터페이스(`.invoke(query) -> list[Document]`)는
-  그대로 유지하면서 감싸면(wrapper) 01·03 노트북은 안 건드려도 된다.
-- **QJL, FlexGen 문서 추가**: `src/config.py`의 `TECH_PAPERS`에 두 줄만 추가.
+- 박서윤 : 프로젝트 구조 설계, State·스키마·프롬프트 정의, 전처리 및 하이브리드 검색 파이프라인, 그래프 기초 코드 구축
+- 이지영 : 기술조사 에이전트(B), 검색 편중 수정, 온디바이스 기준 TRL 판정 보강
+- 박태식 : 도메인 평가 에이전트(E), 보고서 형식 검증 규칙, 노드별 LLM 이원화
+- 이헌준 : 시장성 에이전트(C), 이해관계자 에이전트(D), 평가 종합·보고서 생성·보고서 검증(F/G/H)
