@@ -53,11 +53,10 @@ def make_node_c(llm, web_search_tool):
     structured_llm = llm.with_structured_output(MarketEval)
 
     # 대칭 질의: 템플릿 1벌을 두 기술에 기술명만 바꿔 던진다.
-    # 쿼리가 기술마다 다르면 입력 자체가 기울어, 프롬프트가 요구한
-    # "두 기술 모두 값을 채운다"를 근거로 받쳐 줄 수 없다.
     QUERY_TEMPLATES = [
-        "{tech} KV cache adoption production release notes",
-        "{tech} KV cache support merged llama.cpp MLX vLLM",
+        "{tech} KV cache adoption production release notes 2024 2025 2026",
+        "{tech} KV cache support merged llama.cpp MLX vLLM GitHub",
+        "{tech} on-device edge deployment smartphone integration",
     ]
 
     def node_c_market_eval(state):
@@ -84,12 +83,12 @@ def make_node_d(llm, web_search_tool):
     """D. 이해관계자 평가."""
     structured_llm = llm.with_structured_output(StakeholderEval)
 
-    # 대칭 질의 + 찬반 대칭. 이전 판은 TurboQuant 에 "opinion review" 를,
-    # InfiniGen 에 "criticism" 을 물어 한쪽만 비판을 모으는 구조였다.
-    # 지금은 두 기술 각각에 지지 방향 1개·비판 방향 1개를 같은 문형으로 던진다.
+    # 대칭 질의 + 찬반 대칭: 기술마다 지지/비판/투자 3방향으로 검색.
     QUERY_TEMPLATES = [
-        "{tech} KV cache developer feedback adoption",
-        "{tech} KV cache criticism limitation concern",
+        "{tech} KV cache developer feedback adoption benchmark results",
+        "{tech} KV cache criticism limitation concern drawback",
+        "{tech} KV cache investor analyst report coverage media 2024 2025 2026",
+        "{tech} vs competing KV cache method comparison response",
     ]
 
     def node_d_stakeholder_eval(state):

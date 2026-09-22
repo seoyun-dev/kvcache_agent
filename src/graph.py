@@ -43,8 +43,11 @@ def node_a_select_technologies(state: GraphState) -> dict:
     }
 
 
-def build_graph(llm, tech_retriever, domain_retriever, web_search_tool):
-    """실제 의존성(llm, retriever, 웹서치 도구)을 주입해 컴파일된 그래프를 반환.
+def build_graph(llm, llm_full, tech_retriever, domain_retriever, web_search_tool):
+    """실제 의존성(llm, llm_full, retriever, 웹서치 도구)을 주입해 컴파일된 그래프를 반환.
+
+    llm      : gpt-4.1-mini (C, D, F 등 단순 구조화 출력용)
+    llm_full : gpt-4.1      (B, E, G 등 품질이 중요한 노드용)
 
     테스트할 때는 fake llm/retriever/tool을 넣어서 그래프 배선(엣지, 조건부
     분기, state 병합)만 검증할 수 있다 - tests/test_graph_wiring.py 참고.
@@ -52,12 +55,12 @@ def build_graph(llm, tech_retriever, domain_retriever, web_search_tool):
     g = StateGraph(GraphState)
 
     g.add_node("A", node_a_select_technologies)
-    g.add_node("B", make_node_b(llm, tech_retriever, web_search_tool))
+    g.add_node("B", make_node_b(llm_full, tech_retriever, web_search_tool))
     g.add_node("C", make_node_c(llm, web_search_tool))
     g.add_node("D", make_node_d(llm, web_search_tool))
-    g.add_node("E", make_node_e(llm, domain_retriever))
+    g.add_node("E", make_node_e(llm_full, domain_retriever))
     g.add_node("F", make_node_f(llm))
-    g.add_node("G", make_node_g(llm))
+    g.add_node("G", make_node_g(llm_full))
     g.add_node("H", node_h_validate)
 
     g.add_edge(START, "A")

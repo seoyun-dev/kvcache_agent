@@ -37,10 +37,13 @@ def main():
     llm = init_chat_model(
         config.LLM_MODEL, model_provider=config.LLM_PROVIDER, temperature=config.LLM_TEMPERATURE
     )
+    llm_full = init_chat_model(
+        config.LLM_MODEL_FULL, model_provider=config.LLM_PROVIDER, temperature=config.LLM_TEMPERATURE
+    )
     web_search_tool = TavilySearch(max_results=5)
 
     print("[main] 그래프 컴파일...")
-    graph = build_graph(llm, tech_retriever, domain_retriever, web_search_tool)
+    graph = build_graph(llm, llm_full, tech_retriever, domain_retriever, web_search_tool)
 
     print("[main] 실행 시작 (A -> B -> {C,D,E} -> F -> G <-> H)...")
     result = graph.invoke({}, config={"recursion_limit": 40})

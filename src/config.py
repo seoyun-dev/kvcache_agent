@@ -34,6 +34,7 @@ EMBEDDING_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 
 # 3-2절 LLM (팀 실습 코드 관행: init_chat_model 사용)
 LLM_MODEL = "gpt-4.1-mini"
+LLM_MODEL_FULL = "gpt-4.1"          # B, E, G 등 품질이 중요한 노드용
 LLM_PROVIDER = "openai"
 LLM_TEMPERATURE = 0
 

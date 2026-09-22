@@ -68,12 +68,18 @@ def make_node_g(llm):
         revision_note = ""
         if validation and not validation.get("is_valid", True):
             items = validation.get("missing_items", [])
-            absent = [i for i in items if not i.startswith("서열 표현")]
             violations = [i for i in items if i.startswith("서열 표현")]
+            formats = [i for i in items if i.startswith(FORMAT_PREFIX)]
+            absent = [i for i in items if i not in violations and i not in formats]
             parts = []
             if absent:
                 parts.append(
                     f"다음 장이 빠졌다: {', '.join(absent)}. 이번엔 반드시 포함하라."
+                )
+            if formats:
+                parts.append(
+                    "형식 규칙을 어겼다 — "
+                    + " / ".join(f[len(FORMAT_PREFIX):] for f in formats)
                 )
             if violations:
                 parts.append(
@@ -116,7 +122,56 @@ def make_node_g(llm):
 
 REQUIRED_CHAPTERS = ['SUMMARY', '시장', '이해관계자', '도메인', 'REFERENCE']
 FORBIDDEN_WORDS = ['우수', '우월', '우위', '권장', '추천']
-RANKING_CHECK_CHAPTERS = ['관점별 평가', '시사점']
+RANKING_CHECK_CHAPTERS = ['관점별 평가', '시장', '이해관계자', '도메인', '시사점']
+
+# 장 제목 유무만 보던 이전 판은 "### 시장 관점" 같은 줄글 보고서를 첫 판에
+# 통과시켰다. REPORT_PROMPT가 요구하는 개조식·[소결]·번호 인용이 실제로
+# 지켜졌는지까지 봐야 G<->H 루프가 형식 드리프트를 교정할 수 있다.
+PERSPECTIVE_CHAPTERS = ['시장', '이해관계자', '도메인']
+MIN_SUMMARY_BLOCKS = 3   # 4.1 / 4.2 / 4.3 각 장 끝의 [소결]
+MIN_BULLET_LINES = 15    # 4장 전체에서 '- ' 로 시작하는 줄
+MIN_NUMBERED_REFS = 5    # REFERENCE 의 '[n] ...' 항목 (고정 논문 5건이 하한)
+
+FORMAT_PREFIX = "형식 위반: "
+
+
+def _check_format(report, chapters):
+    """개조식·[소결]·번호 인용이 실제로 지켜졌는지 본다."""
+    import re
+
+    problems = []
+
+    n_concl = report.count("[소결]")
+    if n_concl < MIN_SUMMARY_BLOCKS:
+        problems.append(
+            f"{FORMAT_PREFIX}[소결] 블록이 {n_concl}개뿐이다. "
+            f"4.1/4.2/4.3 각 장 끝에 하나씩 총 {MIN_SUMMARY_BLOCKS}개를 넣어라."
+        )
+
+    bullets = sum(
+        1
+        for t, body in chapters.items()
+        if any(k in t for k in PERSPECTIVE_CHAPTERS)
+        for line in body.split("\n")
+        if line.lstrip().startswith("- ")
+    )
+    if bullets < MIN_BULLET_LINES:
+        problems.append(
+            f"{FORMAT_PREFIX}관점별 평가가 개조식이 아니다("
+            f"'- ' 로 시작하는 줄 {bullets}개, {MIN_BULLET_LINES}개 이상 필요). "
+            "4장의 줄글 문단을 전부 'TurboQuant: / InfiniGen: / →' 3줄 개조식으로 바꿔라."
+        )
+
+    ref_body = "\n".join(b for t, b in chapters.items() if "REFERENCE" in t)
+    numbered = len(re.findall(r"^\s*\[\d+\]", ref_body, re.M))
+    if numbered < MIN_NUMBERED_REFS:
+        problems.append(
+            f"{FORMAT_PREFIX}REFERENCE에 번호 항목이 {numbered}개뿐이다. "
+            f'\'[1] 저자, "제목," 학회/저널, 연도. URL\' 형태로 '
+            f"{MIN_NUMBERED_REFS}개 이상 적어라(프롬프트의 확정 논문 5건을 그대로 복사)."
+        )
+
+    return problems
 
 
 def _split_chapters(report):
@@ -144,6 +199,7 @@ def node_h_validate(state):
 
     # 장 제목에서 찾는다. 본문에 "시장"이라는 낱말이 있다고 장이 있는 건 아니다.
     missing = [c for c in REQUIRED_CHAPTERS if not any(c in t for t in titles)]
+    missing += _check_format(report, chapters)
 
     # 서열어는 지정한 장 안에서만 본다.
     scoped = "\n".join(
