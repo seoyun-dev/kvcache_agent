@@ -88,10 +88,13 @@ class FakeLLM:
                     notes="메모리 예산 - TurboQuant: 가짜 근거. InfiniGen: 가짜 근거.",
                 ),
             )
-        if schema_cls is Synthesis:
+        # F는 schemas.Synthesis 대신 고정 필드 스키마를 런타임에 만들어 쓴다
+        # (Synthesis.labels 가 dict[str,str] 이라 OpenAI 구조화 출력이 거부한다).
+        # 이름으로 받아 schema_cls 그대로 인스턴스화하면 양쪽 다 통한다.
+        if schema_cls.__name__ in ("Synthesis", "SynthesisStrict"):
             return FakeStructuredLLM(
                 schema_cls,
-                Synthesis(
+                schema_cls(
                     labels={"market": "조건 의존", "stakeholder": "조건 의존",
                             "domain": "조건 의존", "trl": "판단보류"},
                     conflicts=["시장은 압축 쪽, 도메인은 확장 쪽을 일부 지지"],
@@ -150,8 +153,8 @@ def run():
 
     # references가 4개 키로 분리돼 각자 잘 채워지는지 (reducer 없이, 단독 작성)
     assert len(result["tech_references"]) == 3, f"B: RAG 2쿼리 + 웹서치 1건, got {len(result['tech_references'])}"
-    assert len(result["market_references"]) == 1, "C 단독 작성 확인"
-    assert len(result["stakeholder_references"]) == 1, "D 단독 작성 확인"
+    assert len(result["market_references"]) == 4, f"C: 2기술 x 2쿼리 템플릿(대칭 질의), got {len(result['market_references'])}"
+    assert len(result["stakeholder_references"]) == 4, f"D: 2기술 x 2쿼리 템플릿(대칭 질의), got {len(result['stakeholder_references'])}"
     assert len(result["domain_references"]) == 3, "E: RAG 3쿼리 확인"
     total_refs = (
         len(result["tech_references"]) + len(result["market_references"])
