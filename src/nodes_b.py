@@ -16,7 +16,7 @@ def make_node_b(llm, tech_retriever, web_search_tool):
     def node_b_tech_research(state):
         queries = [
             "TurboQuant KV cache quantization bits distortion",
-            "InfiniGen KV cache offloading prefetch speedup",
+            "InfiniGen OSDI 2024 KV cache offloading prefetch speedup",
         ]
         all_docs = []
         for q in queries:
@@ -28,7 +28,7 @@ def make_node_b(llm, tech_retriever, web_search_tool):
             web_search_tool,
             [
                 "TurboQuant official runtime production deployment",
-                "InfiniGen official runtime vLLM llama.cpp support",
+                "InfiniGen OSDI 2024 official runtime vLLM llama.cpp support",
             ],
         )
 

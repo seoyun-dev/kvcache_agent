@@ -25,6 +25,7 @@ from src.worker_utils import (
     collect_source,
     find_evidence_gaps,
     gap_queries,
+    search_name,
     run_worker,
     split_web_references,
     to_refs,
@@ -84,7 +85,7 @@ def make_node_e(llm, domain_retriever, web_search_tool=None):
 
         # 대칭 질의: 한쪽 기술만 비었다고 그쪽만 검색하면 검색 자원이 한 기술에
         # 쏠려 확증편향이 된다. 항상 두 기술 모두 같은 템플릿으로 던진다.
-        web_queries = [t.format(tech=tech) for tech in TECHS for t in WEB_TEMPLATES]
+        web_queries = [t.format(tech=search_name(tech)) for tech in TECHS for t in WEB_TEMPLATES]
         web_queries += gap_queries(state)  # 재조사 라운드면 빈 칸 겨냥 검색어 추가
         if web_search_tool is None:
             web_text, hit_queries = "", []

@@ -17,6 +17,7 @@ config.MAX_RETRY_EVAL이고, 도달하면 통과시키되 미달 항목을 보�
 남긴다(forced_pass) - 검증 실패 보고서가 통과 표시로 제출되는 일을 막는다.
 Judge 호출이 실패하면 그래프를 멈추지 않고 규칙 결과만으로 판정한 뒤 errors에 남긴다.
 """
+import json
 import re
 
 from src import config
@@ -156,6 +157,19 @@ def _rule_groundedness(chapters):
     dangling = sorted({n for n in _citations(body) if n not in refs})
     if dangling:
         issues.append(f"본문 인용 {dangling}이 REFERENCE에 없다. 없는 번호를 지우거나 REFERENCE에 항목을 추가하라.")
+    # URL 이 항목 둘째 줄로 넘어가는 형식도 있어서 항목 전체(다음 [n] 전까지)를 본다.
+    ref_body = _body_of(chapters, ["REFERENCE"])
+    blocks = re.split(r"(?m)^\s*(?=\[\d+\])", ref_body)
+    homonyms = sorted(
+        int(m.group(1))
+        for blk in blocks
+        if (m := re.match(r"\[(\d+)\]", blk)) and any(k in blk for k in config.HOMONYM_URL_MARKERS)
+    )
+    if homonyms:
+        issues.append(
+            f"REFERENCE {homonyms}는 이름만 같은 다른 프로젝트다(예: 3D 장면 생성기 InfiniGen). "
+            "그 항목과 본문 인용을 지우고, 근거가 남지 않으면 '근거 없음'으로 써라."
+        )
     for ch in EVAL_CHAPTERS:
         if not _citations(_body_of(chapters, [ch])):
             issues.append(f"'{ch}' 장에 [n] 인용이 하나도 없다. 근거 문장 끝에 REFERENCE 번호를 붙여라.")
@@ -240,11 +254,62 @@ def _rule_coverage(chapters):
     return issues
 
 
-def run_rule_checks(report):
-    """네 항목별 규칙 위반 목록. State와 무관한 순수 함수라 단독 테스트가 가능하다."""
+URL_RE = re.compile(r"https?://[^\s)>\]]+")
+
+
+def _norm_url(u):
+    return u.rstrip(".,;:'\"").rstrip("/").lower()
+
+
+def _rule_reference_urls(chapters, evidence_urls):
+    """REFERENCE 웹 항목([6]~)의 URL 이 워커가 모은 근거에 있는지, 같은 URL 이 두 번 나오지 않는지.
+
+    2026-10-07 run efde822e 에서 [6] 「mlx-vlm Releases」가 REPORT_PROMPT 의 예시를 그대로
+    옮긴 것이었다 - 근거 어디에도 없는 URL 을 4곳에 인용했고 Judge 도 통과시켰다.
+    evidence_urls 가 None 이면(State 없이 단독 검사) 출처 대조는 건너뛴다.
+    """
+    issues = []
+    ref_body = _body_of(chapters, ["REFERENCE"])
+    blocks = [b for b in re.split(r"(?m)^\s*(?=\[\d+\])", ref_body) if re.match(r"\[\d+\]", b)]
+    seen, dup, unknown = {}, [], []
+    # [1]~[5] 는 REPORT_PROMPT 가 고정한 논문이다. 웹 항목이 그 URL 을 다시 적으면 중복으로만 본다.
+    fixed = {
+        _norm_url(u) for blk in blocks
+        if int(re.match(r"\[(\d+)\]", blk).group(1)) <= 5 for u in URL_RE.findall(blk)
+    }
+    for blk in blocks:
+        n = int(re.match(r"\[(\d+)\]", blk).group(1))
+        for u in URL_RE.findall(blk):
+            key = _norm_url(u)
+            if key in seen and seen[key] != n:
+                dup.append((seen[key], n))
+            seen.setdefault(key, n)
+            if n > 5 and evidence_urls is not None and key not in evidence_urls and key not in fixed:
+                unknown.append(n)
+    if dup:
+        issues.append(f"REFERENCE 에 같은 URL 이 중복된다 {sorted(set(dup))}. 하나만 남기고 본문 인용 번호를 합쳐라.")
+    if unknown:
+        issues.append(
+            f"REFERENCE {sorted(set(unknown))}의 URL 이 워커가 모은 근거에 없다(지어낸 출처). "
+            "그 항목과 본문 인용을 지우고, 근거가 남지 않으면 '근거 없음'으로 써라."
+        )
+    return issues
+
+
+def evidence_url_set(state):
+    """워커·B 가 실제로 모은 참고문헌 후보의 URL 집합."""
+    texts = [json.dumps(state.get("tech_references", []), ensure_ascii=False)]
+    for agent in WORKER_AGENTS:
+        texts.append(json.dumps(get_worker_references(state, agent), ensure_ascii=False))
+    return {_norm_url(u) for t in texts for u in URL_RE.findall(t)}
+
+
+def run_rule_checks(report, evidence_urls=None):
+    """네 항목별 규칙 위반 목록. State와 무관한 순수 함수라 단독 테스트가 가능하다.
+    evidence_urls 를 주면 REFERENCE 의 웹 URL 이 근거에 실재하는지도 본다."""
     chapters = _split_chapters(report)
     return {
-        "groundedness": _rule_groundedness(chapters),
+        "groundedness": _rule_groundedness(chapters) + _rule_reference_urls(chapters, evidence_urls),
         "neutrality": _rule_neutrality(report, chapters),
         "bias": _rule_bias(chapters),
         "coverage": _rule_coverage(chapters),
@@ -311,7 +376,7 @@ def make_node_evaluator(llm):
         report = state.get("final_report", "")
         retry_count = state.get("eval_retry_count", 0)
 
-        rule = run_rule_checks(report)
+        rule = run_rule_checks(report, evidence_url_set(state))
 
         errors = []
         try:
