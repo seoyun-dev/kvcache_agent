@@ -198,6 +198,17 @@ def find_evidence_gaps(payload: dict, searched: list[str]) -> list[EvidenceGap]:
     return gaps
 
 
+def gap_queries(state: dict, topic: str = "KV cache") -> list[str]:
+    """Orchestrator 가 재조사로 띄운 태스크면 빈 칸을 겨냥한 검색어를 돌려준다.
+    한쪽 기술만 비어도 **두 기술 모두** 같은 검색어로 던진다(대칭 질의 - 확증편향 방지)."""
+    fields = (state.get("task") or {}).get("gap_fields") or []
+    return [
+        f"{tech} {topic} {field.replace('_', ' ')}"
+        for field in fields
+        for _, tech in TECH_KEYS
+    ]
+
+
 def run_worker(agent: str, fn: Callable[[dict], WorkerOutput], state: dict) -> dict:
     """워커 1개를 실행해 State 패치(worker_results, 실패 시 errors)를 돌려준다.
     node_utils.wrap_worker의 자리를 대신하되 sources·evidence_gaps를 함께 싣는다.

@@ -92,17 +92,31 @@ groundedness는 수치를 지목할 때 그 수치를 근거 자료에서 실제
 # ───────────────────────── 보고서 파싱 ─────────────────────────
 
 def _split_chapters(report):
-    """마크다운 헤더 기준으로 보고서를 {장 제목: 본문}으로 자른다."""
-    chapters = {}
-    title, buf = "(머리말)", []
-    for line in report.split("\n"):
-        m = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+    """마크다운 헤더 기준으로 보고서를 {장 제목: 본문}으로 자른다.
+
+    본문은 **다음 같은 단계 이상 헤더 전까지** 전부다 — 하위 절(##·###)을 포함한다.
+    처음 판은 모든 헤더에서 끊어서 '3. 기술 개요' 처럼 바로 아래 ## 로 시작하는 장의
+    본문이 비고(TRL 없음 오탐), '4.2 이해관계자 평가' 의 인용이 4.2.1~4.2.3 에만 있어
+    0건으로 읽혔다(Groundedness 오탐). 편향 통제 검사도 같은 본문을 읽어 4.2 하위 절이
+    빠진 채 통과했었다.
+    """
+    lines = report.split("\n")
+    heads = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s{0,3}(#{1,6})\s+(.+?)\s*$", line)
         if m:
-            chapters[title] = "\n".join(buf)
-            title, buf = m.group(1), []
-        else:
-            buf.append(line)
-    chapters[title] = "\n".join(buf)
+            heads.append((i, len(m.group(1)), m.group(2)))
+
+    chapters = {"(머리말)": "\n".join(lines[: heads[0][0]] if heads else lines)}
+    for k, (i, level, title) in enumerate(heads):
+        end = len(lines)
+        for j, lv, _ in heads[k + 1:]:
+            if lv <= level:
+                end = j
+                break
+        body = "\n".join(lines[i + 1:end])
+        # 같은 제목이 두 번 나오면(예: 기술별 '## TurboQuant') 이어 붙인다 — 덮어쓰면 앞 것이 사라진다.
+        chapters[title] = chapters[title] + "\n" + body if title in chapters else body
     return chapters
 
 
