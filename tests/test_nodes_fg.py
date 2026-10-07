@@ -185,7 +185,7 @@ def test_no_gaps_means_no_second_round():
 def test_gap_queries_are_symmetric():
     from src.worker_utils import gap_queries
     qs = gap_queries({"task": {"gap_fields": ["adoption_status"]}})
-    assert qs == ["TurboQuant KV cache adoption status", "InfiniGen KV cache adoption status"]
+    assert qs == ["TurboQuant KV cache adoption status", "InfiniGen OSDI 2024 KV cache adoption status"]
     assert gap_queries({}) == []
 
 
@@ -204,3 +204,49 @@ def test_access_date_in_prompt():
     import datetime
     _, _, llm = run_graph(d_failures=0)
     assert datetime.date.today().isoformat() in llm.prompts[0]
+
+
+# ---------- 동명이인(InfiniGen) 차단 ----------
+
+def test_drop_homonyms_filters_princeton_infinigen():
+    from src.worker_utils import drop_homonyms
+    raw = {"query": "q", "results": [
+        {"url": "https://github.com/princeton-vl/infinigen", "title": "Infinigen"},
+        {"url": "https://infinigen.org/", "title": "Infinigen"},
+        {"url": "https://github.com/snu-comparch/InfiniGen", "title": "InfiniGen"},
+    ]}
+    kept = drop_homonyms(raw)["results"]
+    assert [r["url"] for r in kept] == ["https://github.com/snu-comparch/InfiniGen"]
+    assert drop_homonyms("문자열 결과") == "문자열 결과"
+
+
+def test_eval_flags_homonym_reference_even_on_second_line():
+    from src import nodes_eval as ev
+    report = (
+        "# 4. 관점별 평가\n## 4.1 시장성 평가\n- a [6]\n## 4.2 이해관계자 평가\n- b [7]\n## 4.3 도메인 평가\n- c [6]\n"
+        "# REFERENCE\n[6] \"snu\", GitHub, 접근: 2026-10-07.\n    https://github.com/snu-comparch/InfiniGen\n"
+        "[7] \"princeton-vl/infinigen,\" GitHub, 접근: 2026-10-07.\n    https://github.com/princeton-vl/infinigen\n"
+    )
+    issues = ev.run_rule_checks(report)["groundedness"]
+    assert any("[7]" in i and "다른 프로젝트" in i for i in issues), issues
+    assert not any("[6]" in i and "다른 프로젝트" in i for i in issues)
+
+
+# ---------- REFERENCE 출처 대조 ----------
+
+def test_eval_flags_fabricated_and_duplicate_references():
+    from src import nodes_eval as ev
+    report = (
+        "# 4. 관점별 평가\n## 4.1 시장성 평가\n- a [6]\n## 4.2 이해관계자 평가\n- b [7]\n## 4.3 도메인 평가\n- c [8]\n"
+        "# REFERENCE\n[5] K. Alizadeh, \"LLM in a flash,\" 2023. https://arxiv.org/abs/2312.11514\n"
+        "[6] \"mlx-vlm Releases,\" GitHub, 접근: 2026-10-07. https://github.com/Blaizzy/mlx-vlm/releases\n"
+        "[7] \"vLLM Blog,\" vLLM, 접근: 2026-10-07. https://vllm.ai/blog/x\n"
+        "[8] \"vLLM Blog,\" vLLM, 접근: 2026-10-07. https://vllm.ai/blog/x\n"
+        "[9] \"LLM in a flash,\" arXiv, 접근: 2026-10-07. https://arxiv.org/abs/2312.11514\n"
+    )
+    issues = ev.run_rule_checks(report, evidence_urls={"https://vllm.ai/blog/x"})["groundedness"]
+    fabricated = [i for i in issues if "지어낸" in i]
+    assert len(fabricated) == 1 and "[6]" in fabricated[0] and "9" not in fabricated[0]
+    assert any("중복" in i and "(5, 9)" in i and "(7, 8)" in i for i in issues)
+    # State 없이(evidence_urls=None) 돌리면 출처 대조는 건너뛴다
+    assert not any("지어낸" in i for i in ev.run_rule_checks(report)["groundedness"])
