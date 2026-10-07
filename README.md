@@ -243,9 +243,9 @@ TAVILY_API_KEY=...
 
 * 박서윤 : 프로젝트 구조 설계, State·스키마·프롬프트 정의, 전처리 및 하이브리드 검색 파이프라인, 그래프 기초 코드 구축 / Orchestrator-Workers 패턴 전환 — Layered State 재설계(state.py), Orchestrator 노드(동적 fan-out·재시도 라우팅, orchestrator.py), 그래프 재배선(graph.py)
 
-* 이지영 : 기술조사 에이전트(B), 검색 편중 수정, 온디바이스 기준 TRL 판정 보강 / 도메인 평가 에이전트(E) RAG+Web Search 병행 확장 — 기존 B의 하이브리드 검색 경험을 E에 적용
+* 이지영 : 기술조사 에이전트(B), 검색 편중 수정, 온디바이스 기준 TRL 판정 보강 / 보고서 품질 평가 노드(Evaluator) 개발 — 기존 형식·금칙어 검증 규칙에 Groundedness·관점 커버리지 LLM-judge를 더한 Hybrid 평가로 확장
 
-* 박태식 : 도메인 평가 에이전트(E), 보고서 형식 검증 규칙, 노드별 LLM 이원화 / 보고서 품질 평가 노드(Evaluator) 개발 — 기존 형식·금칙어 검증 규칙에 Groundedness·관점 커버리지 LLM-judge를 더한 Hybrid 평가로 확장
+* 박태식 : 도메인 평가 에이전트(E), 보고서 형식 검증 규칙, 노드별 LLM 이원화 / 도메인 평가 에이전트(E)에 Web Search 병행 추가 — RAG 전용에서 RAG+Web Search 하이브리드로 확장(B의 TRL 7~9 보조 웹서치와 동일 패턴)
 
 * 이헌준 : 시장성 에이전트(C), 이해관계자 에이전트(D), 평가 종합·보고서 생성·보고서 검증(F/G/H) / C·D 워커를 WorkerResult 구조로 통합, 평가 종합(Synthesizer)·보고서 생성(G)을 Orchestrator-Workers 구조에 맞게 수정
 
