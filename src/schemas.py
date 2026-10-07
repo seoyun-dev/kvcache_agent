@@ -196,8 +196,9 @@ class DomainEval(BaseModel):
             "criteria의 각 판정마다 왜 그렇게 판단했는지 근거를 정리한다. "
             "형식: '<항목명> - <기술명>: <판정>. 근거는 <문헌명>의 <어느 부분>. "
             "<기술명>: <판정>. 근거는 ...' "
-            "근거는 반드시 [검색된 도메인 평가 논문 원문]이나 [참고: 기술 개요]에 "
-            "실제로 있는 문장·수치만 쓴다. 이 프롬프트의 예시나 필드 설명에 적힌 "
+            "근거는 반드시 [검색된 도메인 평가 논문 원문], [검색된 웹 실측 자료], "
+            "[참고: 기술 개요]에 실제로 있는 문장·수치만 쓰고, 출처를 [논문]/[웹]으로 "
+            "표시한다. 이 프롬프트의 예시나 필드 설명에 적힌 "
             "숫자를 근거로 삼지 마라 - 그건 형식을 보여 주는 자리표시자다. "
             "해당 기술의 수치를 자료에서 못 찾았으면 반드시 '근거 없음'이라고 "
             "적고, 어느 자료를 찾아봤는지 함께 밝힌다. 추정치를 지어내지 않는다."
@@ -225,3 +226,80 @@ class ValidationResult(BaseModel):
     is_valid: bool
     missing_items: list[str] = Field(default_factory=list)
     forced_pass: bool = False
+
+
+# ---------- 워커 공통 반환 (Orchestrator-Workers) ----------
+# 설계 원칙:
+#  - 제어 메타와 페이로드를 섹션으로 분리한다. Orchestrator는 제어 메타만 읽고
+#    분기하고, Synthesizer는 페이로드만 읽는다. 둘이 섞이면 조정 계층이 평가
+#    내용에 의존하게 되고 그 순간 모듈 분리가 무너진다.
+#  - 검색 원문은 State에 넣지 않는다. 원문은 프롬프트로만 흘러가 외부 트레이스에
+#    남고, State에는 출처와 짧은 요약만 남긴다(체크포인트 증식 방지).
+#  - 워커는 예외를 밖으로 던지지 않는다. 실패도 이 객체로 돌아온다 - 하나가
+#    raise하면 dynamic fan-out 전체가 멈추기 때문.
+
+SourceKind = Literal["paper", "web"]
+WorkerStatus = Literal["ok", "failed"]
+REF_DETAIL_MAX = 200
+
+
+class SourceAttempt(BaseModel):
+    """소스 하나의 수집 결과. 폴백이 실제로 돌았다는 증거다.
+    excluded가 찍혀도 워커는 계속 간다 - 소스 단위 제외이지 워커 제외가 아니다."""
+    kind: SourceKind
+    status: Literal["ok", "retried", "excluded"]
+    attempts: int = 1
+    doc_count: int = 0
+    error: str = ""
+
+
+class EvidenceGap(BaseModel):
+    """못 채운 칸 하나. Orchestrator가 이걸 보고 재작업 서브태스크를 좁혀 만든다.
+    '근거 없음'을 뭉뚱그리지 않고 항목x기술 단위로 쪼개는 이유는, 재작업을
+    항목 단위 대칭으로 걸어야 한쪽 기술에만 검색을 더 쓰는 일이 안 생기기 때문."""
+    field: str = Field(description="판정 항목명 - memory_budget 등")
+    tech: str = Field(description="기술명 - TurboQuant / InfiniGen / 공통")
+    partial: bool = Field(
+        default=False,
+        description=(
+            "일부만 비었는가. 예: '들어간다 (16K: 140MB; 32K: 근거 없음)'처럼 작동점 "
+            "하나는 찾고 하나는 못 찾은 경우. 재디스패치 표적으로는 똑같이 유효하지만, "
+            "품질 평가가 '근거 전무'로 오판하면 안 되므로 구분해 둔다."
+        ),
+    )
+    searched: list[str] = Field(
+        default_factory=list, description="찾아본 소스 이름만 적는다. 본문 금지(지속성 비용)"
+    )
+
+
+class WorkerRef(BaseModel):
+    """REFERENCE 장에 들어갈 출처 1건. 본문은 싣지 않는다."""
+    kind: SourceKind = Field(description="품질 평가의 '단일 출처 편중' 검사에 쓰인다")
+    source: str
+    detail: str = Field(default="", description=f"{REF_DETAIL_MAX}자 이내로 잘라서 넣는다")
+
+
+class WorkerResult(BaseModel):
+    """C/D/E 워커가 공통으로 돌려주는 봉투. state.py의 WorkerResult(TypedDict)를
+    그대로 따르고 확장 필드만 얹은 superset이다 - node_utils의
+    latest_worker_result/get_worker_output/get_worker_references가 앞쪽 다섯
+    필드만 읽으므로 그쪽 코드를 고치지 않고 확장분이 같이 실려 간다.
+
+    status를 ok/failed 두 값으로만 두는 게 핵심이다. 이건 '워커가 돌았는가'만
+    말하고 '근거를 찾았는가'는 evidence_gaps가 따로 말한다. 두 축을 한 필드에
+    합치면(예: degraded) get_worker_output이 status != "ok"로 보고 payload를
+    통째로 버린다 - 8칸 중 3칸만 찼어도 그 3칸은 보고서에 들어가야 한다.
+    """
+    # state.py 계약 (하류 노드가 읽는 부분)
+    agent: Literal["C", "D", "E"]
+    output: dict | None = Field(default=None, description="관점별 스키마의 model_dump. failed면 None")
+    references: list[WorkerRef] = Field(default_factory=list)
+    status: WorkerStatus
+    ts: str = Field(default="", description="상관 - 어느 시도인지 식별")
+
+    # 확장 (Orchestrator 재디스패치 표적 + 품질 평가 입력)
+    attempt: int = Field(default=1, description="이 agent의 몇 번째 디스패치인가")
+    error: str | None = None
+    elapsed_ms: int = 0
+    sources: list[SourceAttempt] = Field(default_factory=list)
+    evidence_gaps: list[EvidenceGap] = Field(default_factory=list)
