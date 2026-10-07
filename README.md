@@ -50,7 +50,7 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * Pattern : **Orchestrator-Workers** — 시장성(C)·이해관계자(D)·도메인(E) 평가는 서로 결과를 참조하지 않는 독립 서브태스크이고, B(기술조사)라는 공통 선행 결과만 공유한 뒤 각자 계산해서 끝에 한 번 모이면 되는 구조다. 세 에이전트가 서로 대화하며 재조정할 이유가 없어 Supervisor의 "하위 에이전트 간 동적 라우팅·재조사 루프"는 불필요하고, 대신 사전에 계획을 세워 병렬로 뿌리고 Synthesizer가 병합하는 쪽이 들어맞는다.
 
-* 동적 처리 : Orchestrator가 서브태스크 목록을 `plan`(State)에 구조화해서 저장하고, `plan`에서 `status="pending"`인 태스크만 `Send`로 fan-out한다. Worker(C/D/E) 중 하나가 실패하면 Synthesizer가 해당 태스크를 `failed`로 표시하고 Orchestrator로 되돌아가 **그 Worker만** 재디스패치한다(재시도 상한 도달 시 "근거 없음/판단보류"로 명시하고 진행). 즉 실행마다 fan-out 대상·횟수가 달라진다 — 고정 `A->B->{C,D,E 항상 3개}` DAG가 아니다. 보고서 생성 후에도 품질 평가(Evaluator)가 미달이면 G로 재진입하는 루프가 하나 더 있다.
+* 동적 처리 : Orchestrator가 서브태스크 목록을 `plan`(State)에 구조화해서 저장하고, `plan`에서 `status="pending"`인 태스크만 `Send`로 fan-out한다. 1라운드 결과를 보고 2라운드 대상을 정한다 — Worker 가 **실패**했으면 그 태스크를 재시도하고, 성공했어도 결과에 **근거 공백**(`evidence_gaps`, 일부만 빈 칸은 제외)이 남았으면 **그 빈 칸만 겨냥한 검색어**를 실어 재조사를 보낸다(태스크당 1회, 두 기술 대칭 질의). 실패·공백이 없으면 2라운드는 0건이다. 상한 도달 시 "근거 없음/판단보류"로 명시하고 진행. 즉 실행마다 fan-out 대상·횟수가 달라진다 (실측 2026-10-07: 1라운드 C·D·E 3건 → 2라운드 C(1칸)·E(3칸) 2건) — 고정 `A->B->{C,D,E 항상 3개}` DAG가 아니다. 보고서 생성 후에도 품질 평가(Evaluator)가 미달이면 G로 재진입하는 루프가 하나 더 있다.
 
 * Method : Multi-Agent(Orchestrator-Workers) + Advanced RAG
 
@@ -80,7 +80,8 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * **동적 Fan-out / Fallback (Orchestrator)**
 
-  * C/D/E 중 일부가 실패해도 그래프가 멈추지 않는다 — Synthesizer가 실패를 감지해 Orchestrator로 되돌리면 **실패한 Worker만** 재디스패치하고(최대 `config.MAX_RETRY_ORCH`회), 그래도 실패하면 해당 관점을 "판단보류"로 명시한 채 계속 진행한다.
+  * C/D/E 중 일부가 실패해도 그래프가 멈추지 않는다 — Synthesizer가 실패를 감지해 Orchestrator로 되돌리면 **실패한 Worker만** 재디스패치하고(최대 `config.MAX_RETRY_ORCH`회), 그래도 실패하면 해당 관점을 "판단보류"로 명시한 채 계속 진행한다. 판단보류 라벨은 LLM 이 아니라 코드가 넣는다.
+  * 성공한 Worker 라도 근거 공백이 남으면 Orchestrator 가 **빈 칸 항목만 겨냥한 재조사**를 보낸다(`plan` 의 `reason`·`gap_fields` 에 이유가 남는다). 공백 칸 수 상한은 `config.MAX_REWORK_FIELDS`.
 
 * **확증 편향 방지 전략**
 
@@ -125,7 +126,7 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * 관측성 위치 : 실패 사유를 외부 트레이스로 빼지 않고 `errors`(State 내부, `{agent, error, ts}`)에 그대로 담는다. 재작업 분기(`route_after_synthesis`)는 `plan`의 상태만 보고 결정하지만, 왜 실패했는지는 `errors`를 보면 바로 확인된다 — LangSmith 트레이스와 1:1로 대조 가능.
 
-* 지속성 비용 : `worker_results`는 C/D/E 3개 워커로 유계(bounded)다. 재시도가 있어도 같은 agent가 리스트에 최대 2건(1차 실패 + 2차 성공/실패) 남는 정도라 체크포인트마다 무한 증식하지 않는다.
+* 지속성 비용 : `worker_results`는 C/D/E 3개 워커로 유계(bounded)다. 재시도·재조사가 있어도 같은 agent가 리스트에 최대 2건(1라운드 + 2라운드) 남는 정도라 체크포인트마다 무한 증식하지 않는다.
 
 * 상관 : State와 LangSmith trace를 잇는 키는 `trace_id`다. `main.py`가 `uuid4()`로 만든 `run_id`를 `graph.invoke()`의 `config={"run_id": run_id}`와 초기 State `{"trace_id": str(run_id)}`에 동일한 값으로 넣어서, 제출된 보고서/State만 보고도 LangSmith 대시보드에서 해당 실행을 바로 찾아갈 수 있다. (`WorkerResult.ts`는 별개로, 같은 agent가 재시도로 두 번 등장할 때 "어느 시도인지"를 구분하는 용도 — `node_utils.latest_worker_result`가 이 값 기준으로 최신 시도를 가려낸다.)
 
@@ -143,11 +144,11 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 | :----------------- | :------------------ | :-------------------- | :----------------------------------------------------------------------------------------------------- |
 | A. 기술 선정           | Human 기반            | START                  | **선정 기술**과 **평가 도메인**을 상수로 확정                                                                          |
 | B. 기술조사            | RAG + 보조 Web Search | A                      | 선정 기술 원문 2편(43쪽)을 읽어 개요·적용 범위·한계를 뽑고 TRL을 판정. 1~~6단계는 원문으로, 공식 배포와 상용 지원에 해당하는 7~~9단계만 웹 검색 2건을 보조로 쓴다 |
-| **Orchestrator**   | 없음 (State 라우팅만)     | B                      | 서브태스크 계획(`plan`)을 세우고, `pending`인 태스크만 **동적으로 Send**해 C/D/E를 fan-out. Worker 실패 시 그 태스크만 재진입시켜 재디스패치     |
+| **Orchestrator**   | 없음 (State 라우팅만)     | B                      | 서브태스크 계획(`plan`)을 세우고, `pending`인 태스크만 **동적으로 Send**해 C/D/E를 fan-out. Worker 실패 시 재시도, 근거 공백이 남으면 빈 칸만 겨냥해 재조사     |
 | C. 시장성 평가          | Web Search          | Orchestrator (Worker)  | 시장 규모·성장성, 상용화·채택 현황, 생태계 지지, 표준화 유무를 판정                                                               |
 | D. 이해관계자 평가        | Web Search          | Orchestrator (Worker)  | 경쟁 기술 진영, 도입 기업·개발자, 투자 업계가 각각 무엇이라고 말했는지를 판정                                                          |
 | E. 도메인 평가          | RAG + Web Search     | Orchestrator (Worker)  | 도메인 기준 문헌 3편(50쪽) + 웹 검색을 근거로 메모리 예산, 정확도, 지연, 전력·발열 네 항목을 기술당 판정하고 작동점 간 역전 여부를 서술                     |
-| F. 평가 종합(Synthesizer) | 없음               | C, D, E                | Worker 결과를 집계하고 **네 관점 라벨의 상충 지점을 명시**. 실패한 Worker가 있으면 `plan`을 갱신해 재시도/제외 여부를 판가름              |
+| F. 평가 종합(Synthesizer) | 없음               | C, D, E                | Worker 결과를 집계하고 **네 관점 라벨의 상충 지점을 명시**. `plan` 을 done/failed 로 닫는다. 재디스패치가 남았으면 종합을 미루고, 끝까지 실패한 관점은 코드로 "판단보류"              |
 | G. 보고서 생성          | 없음                  | Synthesizer 또는 Evaluator 재진입 | 네 관점의 판정과 원자료, 참고문헌을 합쳐 **보고서를 조립**                                                               |
 | H. 보고서 품질 평가(Evaluator) | 규칙 기반 + LLM-judge | G                | Groundedness·중립성·편향통제·관점커버리지를 하이브리드로 검사(형식·금칙어는 규칙, 근거 연결·관점 충족은 LLM-judge). 미달이면 G로 되돌린다       |
 

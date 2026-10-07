@@ -17,7 +17,7 @@ C/D/E가 Orchestrator의 계획(plan)에 따라 동적으로 fan-out되고, 실�
 그 표의 항목 이름을 그대로 아래 필드 옆 주석에 달아 코드만 봐도 대응이
 보이게 했다.
 """
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
 import operator
 
 
@@ -27,6 +27,9 @@ class SubTask(TypedDict):
     pending으로 되돌려 그 태스크만 다시 Send한다(= 고정 3-way가 아닌 동적 fan-out)."""
     agent: Literal["C", "D", "E"]
     status: Literal["pending", "done", "failed"]
+    reason: NotRequired[str]             # 관측성: 이 태스크를 왜 (다시) 띄웠나 - 트레이스에 그대로 보인다
+    gap_fields: NotRequired[list[str]]   # 재조사 표적 - 워커가 이 칸만 겨냥한 검색어를 더한다
+    reworked: NotRequired[bool]          # 종료 보장: 재조사는 태스크당 한 번
 
 
 class WorkerResult(TypedDict):
