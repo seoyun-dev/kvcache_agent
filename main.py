@@ -15,6 +15,7 @@ ImportError 메시지에 각 파일이 갖춰야 할 모양이 적혀 있다.
 """
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
@@ -47,14 +48,21 @@ def main():
     print("[main] 그래프 컴파일...")
     graph = build_graph(llm, llm_full, tech_retriever, domain_retriever, web_search_tool)
 
-    print("[main] 실행 시작 (A -> B -> Orchestrator =(동적 fan-out)=> {C,D,E} -> Synthesizer -> G <-> Evaluator)...")
-    result = graph.invoke({}, config={"recursion_limit": 50})
+    # 상관(correlation): run_id를 LangSmith 추적용 config와 State(trace_id) 양쪽에
+    # 같은 값으로 넣어둔다. State Schema 가이드가 요구하는 "trace/run_id 연결 키".
+    run_id = uuid4()
+    print(f"[main] 실행 시작 (run_id={run_id}) (A -> B -> Orchestrator =(동적 fan-out)=> {{C,D,E}} -> Synthesizer -> G <-> Evaluator)...")
+    result = graph.invoke(
+        {"trace_id": str(run_id)},
+        config={"recursion_limit": 50, "run_id": run_id},
+    )
 
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     report_path = config.OUTPUT_DIR / "final_report.md"
     report_path.write_text(result.get("final_report", "(보고서 생성 실패)"), encoding="utf-8")
 
     print(f"[main] 완료. 보고서: {report_path}")
+    print(f"[main] trace_id: {result.get('trace_id')} (LangSmith에서 이 run_id로 검색)")
     print(f"[main] plan: {result.get('plan')}")
     print(f"[main] eval_result: {result.get('eval_result')}")
 

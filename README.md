@@ -127,7 +127,7 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * 지속성 비용 : `worker_results`는 C/D/E 3개 워커로 유계(bounded)다. 재시도가 있어도 같은 agent가 리스트에 최대 2건(1차 실패 + 2차 성공/실패) 남는 정도라 체크포인트마다 무한 증식하지 않는다.
 
-* 상관 : `WorkerResult.ts`로 어느 시도의 결과인지 Synthesizer/Evaluator가 식별한다. 재시도로 같은 agent가 두 번 등장해도 `node_utils.latest_worker_result`가 가장 최근 `ts`를 기준으로 "최신 시도"를 가려낸다.
+* 상관 : State와 LangSmith trace를 잇는 키는 `trace_id`다. `main.py`가 `uuid4()`로 만든 `run_id`를 `graph.invoke()`의 `config={"run_id": run_id}`와 초기 State `{"trace_id": str(run_id)}`에 동일한 값으로 넣어서, 제출된 보고서/State만 보고도 LangSmith 대시보드에서 해당 실행을 바로 찾아갈 수 있다. (`WorkerResult.ts`는 별개로, 같은 agent가 재시도로 두 번 등장할 때 "어느 시도인지"를 구분하는 용도 — `node_utils.latest_worker_result`가 이 값 기준으로 최신 시도를 가려낸다.)
 
 * 재개/복구 : `SubTask.status`(`pending`/`done`/`failed`)가 진행 상태 그 자체다. Orchestrator 재진입 시 `failed`만 `pending`으로 되돌려 그 태스크만 재개한다 — 성공한 태스크를 다시 돌리지 않는다.
 

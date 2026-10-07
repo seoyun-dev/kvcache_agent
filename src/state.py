@@ -49,6 +49,13 @@ def merge_results(a: list, b: list) -> list:
 
 
 class OrchestratorState(TypedDict, total=False):
+    # 상관(correlation): LangSmith 실행(run_id)과 State를 잇는 키. main.py가
+    # graph.invoke()에 config={"run_id": run_id}로 넘기는 값과 동일한 문자열을
+    # 여기 같이 넣어둔다 - 아무 노드도 이 값을 읽거나 쓰지 않는다(그래서 다른
+    # 담당자의 노드 코드는 안 건드려도 됨). 보고서/State만 보고도 LangSmith
+    # 대시보드에서 해당 실행을 바로 찾아갈 수 있게 하기 위한 용도.
+    trace_id: str
+
     # ---- 제어 (control) ----
     selected_technologies: dict
     target_domain: str
