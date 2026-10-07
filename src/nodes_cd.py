@@ -15,6 +15,8 @@ from src.worker_utils import (
     WorkerOutput,
     collect_source,
     find_evidence_gaps,
+    gap_queries,
+    search_name,
     run_worker,
     split_web_references,
     to_refs,
@@ -29,7 +31,8 @@ def _web_only_worker(agent, structured_llm, prompt_template, web_search_tool, te
 
     def work(state) -> WorkerOutput:
         tech_context = summarize_tech_research(state.get("tech_research", {}))
-        queries = [t.format(tech=tech) for tech in TECHS for t in templates]
+        queries = [t.format(tech=search_name(tech)) for tech in TECHS for t in templates]
+        queries += gap_queries(state)  # 재조사 라운드면 빈 칸 겨냥 검색어 추가
 
         (search_results, hit_queries), source = collect_source(
             "web", lambda: web_search_tally(web_search_tool, queries), empty=("", [])

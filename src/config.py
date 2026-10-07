@@ -47,9 +47,21 @@ RETRIEVER_TOP_K_EACH = 20  # BM25/Dense 각각 뽑는 개수
 RETRIEVER_TOP_K_FINAL = 5  # RRF 병합 후 최종 사용 개수
 
 # 3-1절 재시도 상한
-MAX_RETRY_H = 2  # G<->H 보고서 검증 루프
+MAX_RETRY_H = 2  # (구) G<->H 보고서 검증 루프 - nodes_fgh.py가 아직 이 이름을 참조한다.
+                 # nodes_fg.py/nodes_eval.py로 분리되면 아래 MAX_RETRY_EVAL로 대체될 예정.
+
+# Orchestrator-Workers 패턴 전환 후 추가된 두 종류의 루프 상한.
+MAX_RETRY_ORCH = 1  # Orchestrator<->Synthesizer : 재디스패치 라운드 상한 (실패 재시도 + 근거 공백 재조사 공통)
+MAX_REWORK_FIELDS = 4  # 재조사 1건이 겨냥하는 빈 칸 수 상한 (검색 호출 수 = 칸 수 x 2기술)
+MAX_RETRY_EVAL = 2  # G<->Evaluator : 품질 평가 미달 시 보고서 재작성 횟수 (기존 MAX_RETRY_H 승계)
 
 # 3-2절 대상 기술
+# 웹 검색에서 기술명 대신 쓸 검색어. "InfiniGen" 만 던지면 프린스턴의 3D 장면 생성기
+# (princeton-vl/infinigen, infinigen.org)가 섞여 들어와 4.1 생태계 근거로 인용됐다(2026-10-07 run 002d61a1 [10]).
+SEARCH_ALIASES = {"InfiniGen": "InfiniGen OSDI 2024"}
+# 이 문자열이 URL 에 들어간 검색 결과는 버린다 - 이름만 같은 다른 프로젝트.
+HOMONYM_URL_MARKERS = ["princeton-vl/infinigen", "infinigen.org"]
+
 SELECTED_TECHNOLOGIES = {
     "SW": {
         "name": "TurboQuant",

@@ -101,6 +101,24 @@ def to_refs(items: list[dict], kind: SourceKind, *, limit: int | None = None) ->
     return refs[:limit] if limit else refs
 
 
+def search_name(tech: str) -> str:
+    """검색어에 넣을 기술명. 동명이인이 있는 기술은 구분어를 붙인다(config.SEARCH_ALIASES)."""
+    from src import config
+    return config.SEARCH_ALIASES.get(tech, tech)
+
+
+def drop_homonyms(result: Any) -> Any:
+    """Tavily 결과(dict)에서 이름만 같은 다른 프로젝트의 항목을 뺀다. dict 가 아니면 그대로."""
+    from src import config
+    if isinstance(result, dict) and isinstance(result.get("results"), list):
+        kept = [
+            r for r in result["results"]
+            if not any(m in str(r.get("url", "")) for m in config.HOMONYM_URL_MARKERS)
+        ]
+        return {**result, "results": kept}
+    return result
+
+
 def web_search_tally(tool: Any, queries: list[str]) -> tuple[tuple[str, list[str]], int]:
     """쿼리를 하나씩 던지고 성공한 것만 모아 (본문, 성공쿼리목록), 성공건수를 준다.
 
@@ -115,7 +133,7 @@ def web_search_tally(tool: Any, queries: list[str]) -> tuple[tuple[str, list[str
     kept_blocks, kept_queries = [], []
     for q in queries:
         try:
-            kept_blocks.append(f"[{q}] {tool.invoke({'query': q})}")
+            kept_blocks.append(f"[{q}] {drop_homonyms(tool.invoke({'query': q}))}")
             kept_queries.append(q)
         except Exception:  # noqa: BLE001
             continue
@@ -196,6 +214,17 @@ def find_evidence_gaps(payload: dict, searched: list[str]) -> list[EvidenceGap]:
 
     walk(payload, "")
     return gaps
+
+
+def gap_queries(state: dict, topic: str = "KV cache") -> list[str]:
+    """Orchestrator 가 재조사로 띄운 태스크면 빈 칸을 겨냥한 검색어를 돌려준다.
+    한쪽 기술만 비어도 **두 기술 모두** 같은 검색어로 던진다(대칭 질의 - 확증편향 방지)."""
+    fields = (state.get("task") or {}).get("gap_fields") or []
+    return [
+        f"{search_name(tech)} {topic} {field.replace('_', ' ')}"
+        for field in fields
+        for _, tech in TECH_KEYS
+    ]
 
 
 def run_worker(agent: str, fn: Callable[[dict], WorkerOutput], state: dict) -> dict:
