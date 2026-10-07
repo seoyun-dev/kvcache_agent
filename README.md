@@ -222,14 +222,6 @@ OPENAI_API_KEY=...
 TAVILY_API_KEY=...
 ```
 
-**LangSmith 추적(Deliverables 제출용)**: `.env`에 아래 세 줄을 추가하면 별도 코드 수정 없이 자동 추적된다. 동적 fan-out(2차 Send 대상이 1차보다 줄어드는지)과 Orchestrator↔Synthesizer / G↔Evaluator 재진입 횟수를 smith.langchain.com 트레이스에서 캡처해 제출한다.
-
-```
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=...
-LANGCHAIN_PROJECT=kv-cache-agent-orchestrator
-```
-
 * 한 번에 전체 실행
 
   한 번에 끝까지 돌리려면 다음을 쓴다.

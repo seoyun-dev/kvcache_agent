@@ -32,13 +32,6 @@ def main():
         if not os.environ.get(key):
             raise RuntimeError(f"{key} 가 .env에 없다. .env.example 참고.")
 
-    if os.environ.get("LANGCHAIN_TRACING_V2") == "true" and os.environ.get("LANGCHAIN_API_KEY"):
-        print(f"[main] LangSmith 추적 켜짐 (project={os.environ.get('LANGCHAIN_PROJECT')}) - "
-              "동적 fan-out/재시도 trace는 smith.langchain.com에서 캡처할 것.")
-    else:
-        print("[main] LangSmith 추적 꺼져 있음 - Deliverables의 트레이스 캡처가 필요하면 "
-              ".env에 LANGCHAIN_TRACING_V2/LANGCHAIN_API_KEY/LANGCHAIN_PROJECT를 채울 것 (.env.example 참고).")
-
     print("[main] 임베딩 인덱스 구축 중 (Qwen3-Embedding-0.6B 다운로드가 처음엔 시간 걸림)...")
     tech_retriever = build_tech_retriever()
     domain_retriever = build_domain_retriever()
