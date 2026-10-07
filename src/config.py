@@ -47,7 +47,12 @@ RETRIEVER_TOP_K_EACH = 20  # BM25/Dense 각각 뽑는 개수
 RETRIEVER_TOP_K_FINAL = 5  # RRF 병합 후 최종 사용 개수
 
 # 3-1절 재시도 상한
-MAX_RETRY_H = 2  # G<->H 보고서 검증 루프
+MAX_RETRY_H = 2  # (구) G<->H 보고서 검증 루프 - nodes_fgh.py가 아직 이 이름을 참조한다.
+                 # nodes_fg.py/nodes_eval.py로 분리되면 아래 MAX_RETRY_EVAL로 대체될 예정.
+
+# Orchestrator-Workers 패턴 전환 후 추가된 두 종류의 루프 상한.
+MAX_RETRY_ORCH = 1  # Orchestrator<->Synthesizer : 실패한 Worker만 재디스패치하는 횟수
+MAX_RETRY_EVAL = 2  # G<->Evaluator : 품질 평가 미달 시 보고서 재작성 횟수 (기존 MAX_RETRY_H 승계)
 
 # 3-2절 대상 기술
 SELECTED_TECHNOLOGIES = {

@@ -1,6 +1,6 @@
 ## Subject
 
-본 프로젝트는 KV cache 최적화 기술을 소프트웨어, 하드웨어 두 진영에서 선정하여, 시장·이해관계자·도메인 관점에서 평가하는 Agentic RAG를 개발하는 프로젝트이다.
+본 프로젝트는 KV cache 최적화 기술을 소프트웨어, 하드웨어 두 진영에서 선정하여, 시장·이해관계자·도메인 관점에서 평가하는 **Orchestrator-Workers 패턴 기반 Multi-Agent Agentic RAG**를 설계·개발하는 프로젝트이다.
 
 ***
 
@@ -48,9 +48,13 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * Objective : 하나의 기술을 복수 관점에서 비교 평가
 
-* Method : Multi-Agent(Distributed) + Advanced RAG
+* Pattern : **Orchestrator-Workers** — 시장성(C)·이해관계자(D)·도메인(E) 평가는 서로 결과를 참조하지 않는 독립 서브태스크이고, B(기술조사)라는 공통 선행 결과만 공유한 뒤 각자 계산해서 끝에 한 번 모이면 되는 구조다. 세 에이전트가 서로 대화하며 재조정할 이유가 없어 Supervisor의 "하위 에이전트 간 동적 라우팅·재조사 루프"는 불필요하고, 대신 사전에 계획을 세워 병렬로 뿌리고 Synthesizer가 병합하는 쪽이 들어맞는다.
 
-* Tools : **RAG 검색(BM25 + FAISS Hybrid, RRF)**, **Web Search(Tavily)**, **규칙 기반 보고서 검증**
+* 동적 처리 : Orchestrator가 서브태스크 목록을 `plan`(State)에 구조화해서 저장하고, `plan`에서 `status="pending"`인 태스크만 `Send`로 fan-out한다. Worker(C/D/E) 중 하나가 실패하면 Synthesizer가 해당 태스크를 `failed`로 표시하고 Orchestrator로 되돌아가 **그 Worker만** 재디스패치한다(재시도 상한 도달 시 "근거 없음/판단보류"로 명시하고 진행). 즉 실행마다 fan-out 대상·횟수가 달라진다 — 고정 `A->B->{C,D,E 항상 3개}` DAG가 아니다. 보고서 생성 후에도 품질 평가(Evaluator)가 미달이면 G로 재진입하는 루프가 하나 더 있다.
+
+* Method : Multi-Agent(Orchestrator-Workers) + Advanced RAG
+
+* Tools : **RAG 검색(BM25 + FAISS Hybrid, RRF)**, **Web Search(Tavily)**, **규칙 기반 + LLM-judge 하이브리드 보고서 품질 평가**
 
 ***
 
@@ -66,11 +70,17 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
   * 논문에 없는 배포·채택·발화 근거는 Tavily 검색으로 수집한다.
 
-* **보고서 자동 검증 루프**
+* **보고서 품질 평가 루프 (Evaluator, Hybrid)**
 
-  * 생성된 보고서에 필수 장이 있는지, 개조식과 소결 블록과 번호 인용 형식을 지켰는지, 금칙 표현이 들어갔는지를 규칙으로 검사해 위반 시 재작성을 지시한다.
+  * (규칙 기반) 생성된 보고서에 필수 장이 있는지, 개조식과 소결 블록과 번호 인용 형식을 지켰는지, 금칙 표현이 들어갔는지를 규칙으로 검사 — 중립성·편향통제 항목에 대응.
 
-  * 최대 2회까지 재시도하고 상한에 도달하면 검증 실패 사실을 담은 감사 기록을 보고서 안에 남긴 채 종료한다. 검증에 실패한 보고서가 통과 표시로 제출되는 일을 막기 위한 장치다.
+  * (LLM-judge) 보고서의 주장이 실제 검색 근거로 추적되는지(Groundedness), 시장성·이해관계자·도메인·TRL 네 관점이 실질적 내용으로 커버됐는지(관점 커버리지)를 추가로 판정.
+
+  * 둘 중 하나라도 미달이면 재작성을 지시하며 G로 되돌아간다. 최대 `config.MAX_RETRY_EVAL`회까지 재시도하고 상한에 도달하면 실패 사실을 담은 감사 기록을 보고서 안에 남긴 채 종료한다 — 미달 보고서가 통과 표시로 제출되는 일을 막기 위한 장치다.
+
+* **동적 Fan-out / Fallback (Orchestrator)**
+
+  * C/D/E 중 일부가 실패해도 그래프가 멈추지 않는다 — Synthesizer가 실패를 감지해 Orchestrator로 되돌리면 **실패한 Worker만** 재디스패치하고(최대 `config.MAX_RETRY_ORCH`회), 그래도 실패하면 해당 관점을 "판단보류"로 명시한 채 계속 진행한다.
 
 * **확증 편향 방지 전략**
 
@@ -93,7 +103,7 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * Framework : LangGraph
 
-* LLM/Generator : gpt-4.1 (기술조사, 도메인 평가, 보고서 생성)
+* LLM/Generator : gpt-4.1 (기술조사, 도메인 평가, 보고서 생성, 보고서 품질 평가)
 
 * LLM/Judge : gpt-4.1-mini (시장성, 이해관계자, 평가 종합)
 
@@ -107,18 +117,39 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 ***
 
+## State Schema
+
+(상세: [src/state.py](src/state.py))
+
+* 제어 vs 페이로드 분리 : `plan`(계획)·`orch_retry_count`·`eval_retry_count`를 제어 레이어로, `worker_results`·`synthesis`·`final_report`·`eval_result`를 페이로드 레이어로 나눴다. 라우팅 함수(`route_dynamic_fanout`, `route_after_synthesis`, `route_after_eval`)는 제어 레이어만 읽고, 보고서 조립(G)은 페이로드 레이어만 읽는다.
+
+* 관측성 위치 : 실패 사유를 외부 트레이스로 빼지 않고 `errors`(State 내부, `{agent, error, ts}`)에 그대로 담는다. 재작업 분기(`route_after_synthesis`)는 `plan`의 상태만 보고 결정하지만, 왜 실패했는지는 `errors`를 보면 바로 확인된다 — LangSmith 트레이스와 1:1로 대조 가능.
+
+* 지속성 비용 : `worker_results`는 C/D/E 3개 워커로 유계(bounded)다. 재시도가 있어도 같은 agent가 리스트에 최대 2건(1차 실패 + 2차 성공/실패) 남는 정도라 체크포인트마다 무한 증식하지 않는다.
+
+* 상관 : `WorkerResult.ts`로 어느 시도의 결과인지 Synthesizer/Evaluator가 식별한다. 재시도로 같은 agent가 두 번 등장해도 `node_utils.latest_worker_result`가 가장 최근 `ts`를 기준으로 "최신 시도"를 가려낸다.
+
+* 재개/복구 : `SubTask.status`(`pending`/`done`/`failed`)가 진행 상태 그 자체다. Orchestrator 재진입 시 `failed`만 `pending`으로 되돌려 그 태스크만 재개한다 — 성공한 태스크를 다시 돌리지 않는다.
+
+* 동시 처리 : Orchestrator가 Send로 C/D/E를 동시에 내보내면 세 노드가 같은 슈퍼스텝에서 `worker_results`에 동시에 쓴다. `merge_results`(리스트 concat) reducer가 이 동시쓰기를 병합한다. `errors`도 같은 이유로 `operator.add` reducer를 둔다.
+
+* 종료 보장 : 루프가 두 개라 상한도 두 개다 — Orchestrator↔Synthesizer는 `orch_retry_count`(`config.MAX_RETRY_ORCH`), G↔Evaluator는 `eval_retry_count`(`config.MAX_RETRY_EVAL`). 둘 다 상한 도달 시 `forced_pass`/판단보류 처리로 강제 종료하고 그 사실을 보고서·State에 남긴다(무한 루프 방지).
+
+***
+
 ## Agents
 
-| Agent       | 도구                  | 선행 노드      | 하는 일                                                                                                   |
-| :---------- | :------------------ | :--------- | :----------------------------------------------------------------------------------------------------- |
-| A. 기술 선정    | Human 기반            | START      | **선정 기술**과 **평가 도메인**을 상수로 확정                                                                          |
-| B. 기술조사     | RAG + 보조 Web Search | A          | 선정 기술 원문 2편(43쪽)을 읽어 개요·적용 범위·한계를 뽑고 TRL을 판정. 1~~6단계는 원문으로, 공식 배포와 상용 지원에 해당하는 7~~9단계만 웹 검색 2건을 보조로 쓴다 |
-| C. 시장성 평가   | Web Search          | B          | 시장 규모·성장성, 상용화·채택 현황, 생태계 지지, 표준화 유무를 판정                                                               |
-| D. 이해관계자 평가 | Web Search          | B          | 경쟁 기술 진영, 도입 기업·개발자, 투자 업계가 각각 무엇이라고 말했는지를 판정                                                          |
-| E. 도메인 평가   | RAG                 | B          | 도메인 기준 문헌 3편(50쪽)을 근거로 메모리 예산, 정확도, 지연, 전력·발열 네 항목을 기술당 판정하고 작동점 간 역전 여부를 서술                           |
-| F. 평가 종합    | 없음                  | C, D, E    | 네 관점 라벨을 모아 **상충 지점을 명시적**으로 드러낸다                                                                      |
-| G. 보고서 생성   | 없음                  | F 또는 H 재진입 | 네 관점의 판정과 원자료, 네 갈래 참고문헌을 합쳐 **보고서를 조립**                                                               |
-| H. 보고서 검증   | 규칙 기반               | G          | 필수 장, 개조식·소결·번호 인용 형식, 금칙 표현을 검사. 무효면 G로 되돌린다                                                          |
+| Agent              | 도구                  | 선행 노드                | 하는 일                                                                                                   |
+| :----------------- | :------------------ | :-------------------- | :----------------------------------------------------------------------------------------------------- |
+| A. 기술 선정           | Human 기반            | START                  | **선정 기술**과 **평가 도메인**을 상수로 확정                                                                          |
+| B. 기술조사            | RAG + 보조 Web Search | A                      | 선정 기술 원문 2편(43쪽)을 읽어 개요·적용 범위·한계를 뽑고 TRL을 판정. 1~~6단계는 원문으로, 공식 배포와 상용 지원에 해당하는 7~~9단계만 웹 검색 2건을 보조로 쓴다 |
+| **Orchestrator**   | 없음 (State 라우팅만)     | B                      | 서브태스크 계획(`plan`)을 세우고, `pending`인 태스크만 **동적으로 Send**해 C/D/E를 fan-out. Worker 실패 시 그 태스크만 재진입시켜 재디스패치     |
+| C. 시장성 평가          | Web Search          | Orchestrator (Worker)  | 시장 규모·성장성, 상용화·채택 현황, 생태계 지지, 표준화 유무를 판정                                                               |
+| D. 이해관계자 평가        | Web Search          | Orchestrator (Worker)  | 경쟁 기술 진영, 도입 기업·개발자, 투자 업계가 각각 무엇이라고 말했는지를 판정                                                          |
+| E. 도메인 평가          | RAG + Web Search     | Orchestrator (Worker)  | 도메인 기준 문헌 3편(50쪽) + 웹 검색을 근거로 메모리 예산, 정확도, 지연, 전력·발열 네 항목을 기술당 판정하고 작동점 간 역전 여부를 서술                     |
+| F. 평가 종합(Synthesizer) | 없음               | C, D, E                | Worker 결과를 집계하고 **네 관점 라벨의 상충 지점을 명시**. 실패한 Worker가 있으면 `plan`을 갱신해 재시도/제외 여부를 판가름              |
+| G. 보고서 생성          | 없음                  | Synthesizer 또는 Evaluator 재진입 | 네 관점의 판정과 원자료, 참고문헌을 합쳐 **보고서를 조립**                                                               |
+| H. 보고서 품질 평가(Evaluator) | 규칙 기반 + LLM-judge | G                | Groundedness·중립성·편향통제·관점커버리지를 하이브리드로 검사(형식·금칙어는 규칙, 근거 연결·관점 충족은 LLM-judge). 미달이면 G로 되돌린다       |
 
 TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목차의 관점별 평가에는 시장, 이해관계자, 도메인만 있고 TRL은 기술 개요 장에 속하기 때문이다. TRL 5부터는 환경 게이트를 걸어, 온디바이스 기기에서 측정한 것과 온디바이스 런타임에 들어간 것만 인정해 값을 다시 매긴다.
 
@@ -126,7 +157,9 @@ TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목
 
 ## Architecture
 
-![](README_img/image2.png)
+![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/23167b3d-2b9e-45b2-824e-4aa4c0b1c76e)![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/fe96bd60-76d3-4fc7-ba8c-6fb76a2696bb)![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/11c22355-34cf-4a03-98bc-e52fada37209)![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/b9b96aec-6446-4d43-8993-be8e401ba733)
+
+![](README_img/image.png)
 
 **전처리 파이프라인** (B·E가 공유)
 
@@ -149,17 +182,20 @@ TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목
 │   ├── 04_agent_FGH_synthesis_report_validate.ipynb
 │   └── 05_full_graph_run.ipynb
 ├── src/
-│   ├── config.py           문서 경로, 모델 이름, 선정 기술, 분석 배경 문단
-│   ├── state.py            State Schema
+│   ├── config.py           문서 경로, 모델 이름, 선정 기술, 분석 배경 문단, 재시도 상한
+│   ├── state.py            State Schema (Layered: 제어/페이로드 분리, OrchestratorState)
+│   ├── orchestrator.py     Orchestrator 노드 + 동적 fan-out/재진입 라우팅 (신규)
 │   ├── schemas.py          에이전트 구조화 출력 (Pydantic)
 │   ├── prompts.py          평가 기준을 옮긴 프롬프트
 │   ├── ingest.py           전처리와 하이브리드 검색 파이프라인
-│   ├── node_utils.py       노트북 공용 헬퍼
+│   ├── node_utils.py       노트북 공용 헬퍼 + 워커 공통 계약(wrap_worker 등)
 │   ├── nodes_b.py          노트북 01이 생성
-│   ├── nodes_cd.py         노트북 02가 생성
-│   ├── nodes_e.py          노트북 03이 생성
-│   ├── nodes_fgh.py        노트북 04가 생성
-│   └── graph.py            그래프 배선
+│   ├── nodes_cd.py         노트북 02가 생성 (WorkerResult 모양으로 wrap 예정)
+│   ├── nodes_e.py          노트북 03이 생성 (RAG+Web Search 병행으로 확장 예정)
+│   ├── nodes_fg.py         노트북 04 분리 산출물 — F(Synthesizer)/G(보고서 생성) (신규)
+│   ├── nodes_eval.py       노트북 04 분리 산출물 — Evaluator(품질 평가) (신규)
+│   ├── nodes_fgh.py        (구) F/G/H 통합 버전 — nodes_fg.py/nodes_eval.py로 대체 예정
+│   └── graph.py            그래프 배선 (Orchestrator-Workers)
 ├── output/                 평가 결과 저장
 ├── scripts/download_papers.sh
 ├── main.py                 실행 스크립트
@@ -167,6 +203,8 @@ TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목
 ```
 
 노드 구현은 노트북이 원본이고 src/nodes\_.py는 생성물이다. 각 노트북 마지막 저장 셀이 그 노트북에서 정의한 함수를 그대로 긁어 해당 .py를 통째로 다시 쓴다. 그래서 src/nodes\_.py를 직접 고치면 다음에 누군가 저장 셀을 실행할 때 그 수정이 사라진다. 고칠 일이 있으면 노트북에서 고치고 저장 셀을 다시 실행할 것. 저장 셀은 덮어쓰기 전후의 최상위 심볼을 비교해 사라진 이름이 있으면 경고를 찍는다.
+
+**Orchestrator-Workers 전환 메모**: `graph.py`는 이제 `nodes_fgh.py`가 아니라 `nodes_fg.py`/`nodes_eval.py`를 import한다. 04번 노트북을 F/G 저장 셀과 Evaluator(구 H) 저장 셀 둘로 나눠, 두 사람이 같은 노트북/파일을 동시에 건드리며 충돌하는 일이 없게 했다. `state.py`/`orchestrator.py`/`graph.py`/`config.py`는 노트북 생성물이 아니라 직접 유지보수하는 파일이다.
 
 ***
 
@@ -224,7 +262,7 @@ TAVILY_API_KEY=...
   한쪽 기술의 공개 자료가 적으면 LLM은 자연히 그 방향을 불리하게 서술하려는 경향이 있다. evidence\_status를 명시적으로 두고, F(평가 종합) 단계에서 항목×기술 근거 유무를 따로 집계해 "근거 없음이 한쪽에만 몰렸다"는 사실 자체가 편향 신호로 보고서에 드러나게 했다.
 
 * **State를 하나를 공유하되, 노드별로 완전히 분리해 병렬 개발을 실제로 가능하게 했다**
-  market\_eval/stakeholder\_eval/domain\_eval과 그 근거 리스트까지 쓰는 노드가 정확히 1개씩이라 reducer 없이도 동시 쓰기 충돌이 설계상 발생하지 않는다. 노트북 4개를 팀원이 동시에 열어 독립적으로 개발·저장할 수 있었다.
+  (Orchestrator-Workers 전환 후) market\_eval/stakeholder\_eval/domain\_eval처럼 노드마다 전용 키를 두던 방식에서, C/D/E가 동일한 `WorkerResult` 모양으로 `worker_results`에 쓰는 방식으로 바꿨다. 동적 fan-out·재시도 때문에 더 이상 "쓰는 노드가 정확히 1개"를 보장할 수 없어졌지만, `merge_results` reducer가 동시쓰기를 흡수해 노드별 분리·병렬 개발 가능성은 그대로 유지된다. 노트북(01~03, 04는 F/G와 Evaluator로 분리)을 팀원이 동시에 열어 독립적으로 개발·저장할 수 있다.
 
 ***
 
@@ -238,7 +276,7 @@ TAVILY_API_KEY=...
   초반엔 B·E가 뽑아주는 판정이 그럴듯하게 잘 나와서 "역시 이 도메인엔 RAG가 잘 맞는구나" 싶었다. 그런데 검증 삼아 간단한 LLM-as-Judge 스크립트를 만들어 붙여봤더니, 겉보기엔 멀쩡했던 판정 중 상당수가 사실은 `근거 없음`으로 롤백돼야 하는 경우였다. 원인을 추적해보니, 논문에서 그 판정에 맞는 단락을 못 찾으면 LLM이 **Pydantic 스키마 필드의 `description`에 예시로 적어둔 문장을 실제 답인 것처럼 그대로 베껴서** 냈다. "못 찾으면 근거 없음이라고 써라"는 프롬프트 지시문만으로는 이걸 못 걸렀다. description의 예시 문구 자체가 형식은 완벽하게 맞아서, 단순 규칙 검사로는 실제 근거인지 예시를 베낀 건지 구분이 안 됐다.
 
   여기서 두 가지를 배웠다. 첫째, "이 분야는 RAG가 잘 맞는다"는 판단이 맞더라도 그게 검색이 실제로 관련 근거를 찾아준다는 보장은 아니다. 고정된 논문 몇 편으로 커버 안 되는 최신·광범위한 사실은 RAG만으로 밀어붙이지 말고 Web Search를 꼭 함께 고려해야 한다(실제로 B는 그렇게 하이브리드로 구성했다). 둘째, "겉보기엔 잘 작동하는 것 같다"는 확신은 검증 전까진 근거가 없다. 이런 실패 양상은 프롬프트 지시문만으로는 안 막히고, LLM-as-Judge 같은 별도 검증 단계를 실제로 붙여봐야만 드러난다.
-  
+
 * **BM25 vs 학습된 sparse(SPLADE·bge-m3) — sparse를 굳이 나눠 쓴 이유를 다시 짚어봤다**
   BM25는 글자가 정확히 겹쳐야만 잡는다. "차"로 검색했는데 문서에 "자동차"만 있으면 못 찾는다.
   SPLADE 같은 학습된 sparse는 MLM으로 전체 vocabulary에 가중치를 예측해, 입력에 없는 단어(동의어)
@@ -250,5 +288,4 @@ TAVILY_API_KEY=...
   관리할 모델·인프라가 줄어든다
 
   <br />
-
 
