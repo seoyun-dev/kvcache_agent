@@ -48,9 +48,9 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * Objective : 하나의 기술을 복수 관점에서 비교 평가
 
-* Pattern : **Orchestrator-Workers** — 시장성(C)·이해관계자(D)·도메인(E) 평가는 서로 결과를 참조하지 않는 독립 서브태스크이고, B(기술조사)라는 공통 선행 결과만 공유한 뒤 각자 계산해서 끝에 한 번 모이면 되는 구조다. 세 에이전트가 서로 대화하며 재조정할 이유가 없어 Supervisor의 "하위 에이전트 간 동적 라우팅·재조사 루프"는 불필요하고, 대신 사전에 계획을 세워 병렬로 뿌리고 Synthesizer가 병합하는 쪽이 들어맞는다.
+* Pattern : **Orchestrator-Workers** — 시장성(C)·이해관계자(D)·도메인(E) 평가는 서로 결과를 참조하지 않는 독립 서브태스크이고, B(기술조사)라는 공통 선행 결과만 공유한 뒤 각자 계산해서 끝에 한 번 모이면 되는 구조다. 세 에이전트가 서로 대화하며 재조정할 이유가 없어 Supervisor 처럼 매 스텝 중앙이 다음 에이전트를 고를 필요가 없고, 사전에 계획을 세워 병렬로 뿌리고 Synthesizer가 병합하는 쪽이 들어맞는다. 재작업이 필요하면(실패·근거 공백) 중앙이 결과를 보고 **다시 일괄로 분해**해 그 태스크만 재디스패치한다.
 
-* 동적 처리 : Orchestrator가 서브태스크 목록을 `plan`(State)에 구조화해서 저장하고, `plan`에서 `status="pending"`인 태스크만 `Send`로 fan-out한다. 1라운드 결과를 보고 2라운드 대상을 정한다 — Worker 가 **실패**했으면 그 태스크를 재시도하고, 성공했어도 결과에 **근거 공백**(`evidence_gaps`, 일부만 빈 칸은 제외)이 남았으면 **그 빈 칸만 겨냥한 검색어**를 실어 재조사를 보낸다(태스크당 1회, 두 기술 대칭 질의). 실패·공백이 없으면 2라운드는 0건이다. 상한 도달 시 "근거 없음/판단보류"로 명시하고 진행. 즉 실행마다 fan-out 대상·횟수가 달라진다 (실측 2026-10-07: 1라운드 C·D·E 3건 → 2라운드 C(1칸)·E(3칸) 2건) — 고정 `A->B->{C,D,E 항상 3개}` DAG가 아니다. 보고서 생성 후에도 품질 평가(Evaluator)가 미달이면 G로 재진입하는 루프가 하나 더 있다.
+* 동적 처리 : Orchestrator가 서브태스크 목록을 `plan`(State)에 구조화해서 저장하고, `plan`에서 `status="pending"`인 태스크만 `Send`로 fan-out한다. 1라운드 결과를 보고 2라운드 대상을 정한다 — Worker 가 **실패**했으면 그 태스크를 재시도하고, 성공했어도 결과에 **근거 공백**(`evidence_gaps`, 일부만 빈 칸은 제외)이 남았으면 **그 빈 칸만 겨냥한 검색어**를 실어 재조사를 보낸다(태스크당 1회, 두 기술 대칭 질의). 실패·공백이 없으면 2라운드는 0건이다. 상한 도달 시 "근거 없음/판단보류"로 명시하고 진행. 즉 실행마다 fan-out 대상·횟수·검색 표적이 달라진다 — 고정 `A->B->{C,D,E 항상 3개}` DAG가 아니다. 1라운드의 3관점(시장성·이해관계자·도메인)은 가이드가 정한 평가 관점이라 매번 계획에 오르지만, 2라운드부터는 `plan` 의 `reason`·`gap_fields` 로 **무엇을 왜 다시 띄웠는지**가 남는다. 실측: run 002d61a1 은 1라운드 3건 → 2라운드 C(1칸)·E(3칸) 2건, 최종 제출 run af868ed0 은 1라운드 3건 → 2라운드 C(standardization)·D(investor_coverage)·E(memory_budget·latency·power_thermal) 3건. 보고서 생성 후에도 품질 평가(Evaluator)가 미달이면 G로 재진입하는 루프가 하나 더 있다.
 
 * Method : Multi-Agent(Orchestrator-Workers) + Advanced RAG
 
@@ -73,6 +73,8 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 * **보고서 품질 평가 루프 (Evaluator, Hybrid)**
 
   * (규칙 기반) 생성된 보고서에 필수 장이 있는지, 개조식과 소결 블록과 번호 인용 형식을 지켰는지, 금칙 표현이 들어갔는지를 규칙으로 검사 — 중립성·편향통제 항목에 대응.
+
+  * (규칙 기반, 출처 대조) REFERENCE 의 웹 URL 이 워커가 실제로 모은 근거에 있는지, 같은 URL 이 중복되지 않는지, 이름만 같은 다른 프로젝트(3D 장면 생성기 InfiniGen)가 섞이지 않았는지를 State 의 근거와 대조 — Judge 가 통과시킨 지어낸 출처(프롬프트 예시 URL 복사)를 실제로 잡았다(run af868ed0: 1·2회차 미달 → 3회차 통과).
 
   * (LLM-judge) 보고서의 주장이 실제 검색 근거로 추적되는지(Groundedness), 시장성·이해관계자·도메인·TRL 네 관점이 실질적 내용으로 커버됐는지(관점 커버리지)를 추가로 판정.
 
@@ -104,11 +106,11 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * Framework : LangGraph
 
-* LLM/Generator : gpt-4.1 (기술조사, 도메인 평가, 보고서 생성, 보고서 품질 평가)
+* LLM/Generator : gpt-4.1 (기술조사, 도메인 평가, 보고서 생성) · gpt-4.1-mini (시장성, 이해관계자, 평가 종합)
 
-* LLM/Judge : gpt-4.1-mini (시장성, 이해관계자, 평가 종합)
+* LLM/Judge : gpt-4.1 (보고서 품질 평가 Evaluator 의 LLM-judge — `graph.py` 에서 `make_node_evaluator(llm_full)`)
 
-* Retrieval : BM25 top-20 과 FAISS Dense top-20 을 RRF로 병합해 top-5 사용, 리랭커 없음
+* Retrieval : BM25 top-20 과 FAISS Dense top-20 을 RRF로 병합해 top-5 사용, 리랭커 없음 — Hit Rate@K·MRR 은 이번 과제에서 측정하지 않았다(골든셋 미구축)
 
 * Embedding : Qwen/Qwen3-Embedding-0.6B
 
@@ -124,17 +126,17 @@ Apple은 WWDC에서 파운데이션 모델 기반 개인 에이전트로 Siri를
 
 * 제어 vs 페이로드 분리 : `plan`(계획)·`orch_retry_count`·`eval_retry_count`를 제어 레이어로, `worker_results`·`synthesis`·`final_report`·`eval_result`를 페이로드 레이어로 나눴다. 라우팅 함수(`route_dynamic_fanout`, `route_after_synthesis`, `route_after_eval`)는 제어 레이어만 읽고, 보고서 조립(G)은 페이로드 레이어만 읽는다.
 
-* 관측성 위치 : 실패 사유를 외부 트레이스로 빼지 않고 `errors`(State 내부, `{agent, error, ts}`)에 그대로 담는다. 재작업 분기(`route_after_synthesis`)는 `plan`의 상태만 보고 결정하지만, 왜 실패했는지는 `errors`를 보면 바로 확인된다 — LangSmith 트레이스와 1:1로 대조 가능.
+* 관측성 위치 : 실패 사유를 외부 트레이스로 빼지 않고 `errors`(State 내부, `{agent, error, ts}`)에 그대로 담는다. 재작업 분기(`route_after_synthesis`)는 `plan`의 상태만 보고 결정하지만, 왜 실패했는지는 `errors`를 보면 바로 확인된다 — LangSmith 트레이스와 1:1로 대조 가능. **결정과 사유**는 `plan` 의 각 태스크에 `reason`(초기 분해 / 실행 실패 재시도 / 근거 공백 재조사 (항목))과 `gap_fields` 로 남는다 — 라우팅 결정이 State 에 사유째 기록되므로 트레이스의 Orchestrator 출력만 보고도 왜 그 워커가 다시 떴는지 읽힌다.
 
 * 지속성 비용 : `worker_results`는 C/D/E 3개 워커로 유계(bounded)다. 재시도·재조사가 있어도 같은 agent가 리스트에 최대 2건(1라운드 + 2라운드) 남는 정도라 체크포인트마다 무한 증식하지 않는다.
 
 * 상관 : State와 LangSmith trace를 잇는 키는 `trace_id`다. `main.py`가 `uuid4()`로 만든 `run_id`를 `graph.invoke()`의 `config={"run_id": run_id}`와 초기 State `{"trace_id": str(run_id)}`에 동일한 값으로 넣어서, 제출된 보고서/State만 보고도 LangSmith 대시보드에서 해당 실행을 바로 찾아갈 수 있다. (`WorkerResult.ts`는 별개로, 같은 agent가 재시도로 두 번 등장할 때 "어느 시도인지"를 구분하는 용도 — `node_utils.latest_worker_result`가 이 값 기준으로 최신 시도를 가려낸다.)
 
-* 재개/복구 : `SubTask.status`(`pending`/`done`/`failed`)가 진행 상태 그 자체다. Orchestrator 재진입 시 `failed`만 `pending`으로 되돌려 그 태스크만 재개한다 — 성공한 태스크를 다시 돌리지 않는다.
+* 재개/복구 : `SubTask.status`(`pending`/`done`/`failed`)가 진행 상태 그 자체다. Orchestrator 재진입 시 `failed` 태스크와, `done` 이지만 근거 공백이 남고 아직 재조사하지 않은(`reworked` 없음) 태스크만 `pending`으로 되돌린다 — 공백 없이 끝난 태스크는 다시 돌리지 않는다.
 
 * 동시 처리 : Orchestrator가 Send로 C/D/E를 동시에 내보내면 세 노드가 같은 슈퍼스텝에서 `worker_results`에 동시에 쓴다. `merge_results`(리스트 concat) reducer가 이 동시쓰기를 병합한다. `errors`도 같은 이유로 `operator.add` reducer를 둔다.
 
-* 종료 보장 : 루프가 두 개라 상한도 두 개다 — Orchestrator↔Synthesizer는 `orch_retry_count`(`config.MAX_RETRY_ORCH`), G↔Evaluator는 `eval_retry_count`(`config.MAX_RETRY_EVAL`). 둘 다 상한 도달 시 `forced_pass`/판단보류 처리로 강제 종료하고 그 사실을 보고서·State에 남긴다(무한 루프 방지).
+* 종료 보장 : 루프가 두 개라 상한도 두 개다 — Orchestrator↔Synthesizer는 `orch_retry_count`(`config.MAX_RETRY_ORCH`), G↔Evaluator는 `eval_retry_count`(`config.MAX_RETRY_EVAL`). 둘 다 상한 도달 시 `forced_pass`/판단보류 처리로 강제 종료하고 그 사실을 보고서·State에 남긴다(무한 루프 방지). 그 밖에 재조사는 태스크당 1회(`reworked`), 한 번에 겨냥하는 빈 칸은 `config.MAX_REWORK_FIELDS`(4)개, G 의 분량 초과 재생성은 1회(`nodes_fg.MAX_SHRINK_RETRY`), 그래프 전체는 `recursion_limit=50`.
 
 ***
 
@@ -158,7 +160,6 @@ TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목
 
 ## Architecture
 
-![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/23167b3d-2b9e-45b2-824e-4aa4c0b1c76e)![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/fe96bd60-76d3-4fc7-ba8c-6fb76a2696bb)![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/11c22355-34cf-4a03-98bc-e52fada37209)![](blob:vscode-webview://1m3bit9gv5so2ed6j1vi1v2lq34n0n4cv7tvprlhr29bao85tu8t/b9b96aec-6446-4d43-8993-be8e401ba733)
 
 ![](README_img/image.png)
 
@@ -176,7 +177,7 @@ TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목
 
 ```
 ├── data/papers/            대상 논문 5편 (스크립트로 내려받는다, 저장소에 없음)
-├── notebooks/              에이전트별 개발 노트북 (각 노드의 원본)
+├── notebooks/              에이전트별 개발 노트북 (Orchestrator-Workers 전환 이전 기록 — 저장 셀 실행 금지, 아래 참고)
 │   ├── 01_agent_B_tech_research.ipynb
 │   ├── 02_agent_CD_market_stakeholder.ipynb
 │   ├── 03_agent_E_domain.ipynb
@@ -189,23 +190,25 @@ TRL은 전담 에이전트 없이 B의 산출물 안에 들어간다. 참고 목
 │   ├── schemas.py          에이전트 구조화 출력 (Pydantic)
 │   ├── prompts.py          평가 기준을 옮긴 프롬프트
 │   ├── ingest.py           전처리와 하이브리드 검색 파이프라인
-│   ├── node_utils.py       노트북 공용 헬퍼 + 워커 공통 계약(wrap_worker 등)
-│   ├── nodes_b.py          노트북 01이 생성
-│   ├── nodes_cd.py         노트북 02가 생성 (WorkerResult 모양으로 wrap 예정)
-│   ├── nodes_e.py          노트북 03이 생성 (RAG+Web Search 병행으로 확장 예정)
-│   ├── nodes_fg.py         노트북 04 분리 산출물 — F(Synthesizer)/G(보고서 생성) (신규)
-│   ├── nodes_eval.py       노트북 04 분리 산출물 — Evaluator(품질 평가) (신규)
-│   ├── nodes_fgh.py        (구) F/G/H 통합 버전 — nodes_fg.py/nodes_eval.py로 대체 예정
+│   ├── node_utils.py       공용 헬퍼 + 워커 결과 읽기(latest_worker_result / get_worker_output 등)
+│   ├── worker_utils.py     워커 공통 실행 껍데기(run_worker) · 근거 공백 탐지 · 재조사 검색어 · 동명이인 결과 필터
+│   ├── nodes_b.py          B. 기술조사
+│   ├── nodes_cd.py         C·D 워커 (시장성 / 이해관계자)
+│   ├── nodes_e.py          E 워커 (도메인, RAG + Web Search)
+│   ├── nodes_fg.py         F(Synthesizer) · G(보고서 생성)
+│   ├── nodes_eval.py       Evaluator(품질 평가, 규칙 + LLM-judge)
+│   ├── nodes_fgh.py        (구) F/G/H 통합 버전 — 그래프에서 쓰지 않는다
 │   └── graph.py            그래프 배선 (Orchestrator-Workers)
+├── tests/                  배선 테스트 (가짜 LLM, API 키 불필요) — pytest tests
 ├── output/                 평가 결과 저장
 ├── scripts/download_papers.sh
 ├── main.py                 실행 스크립트
 └── README.md
 ```
 
-노드 구현은 노트북이 원본이고 src/nodes\_.py는 생성물이다. 각 노트북 마지막 저장 셀이 그 노트북에서 정의한 함수를 그대로 긁어 해당 .py를 통째로 다시 쓴다. 그래서 src/nodes\_.py를 직접 고치면 다음에 누군가 저장 셀을 실행할 때 그 수정이 사라진다. 고칠 일이 있으면 노트북에서 고치고 저장 셀을 다시 실행할 것. 저장 셀은 덮어쓰기 전후의 최상위 심볼을 비교해 사라진 이름이 있으면 경고를 찍는다.
+**src/*.py 가 원본이다.** 노트북 01~04 는 Orchestrator-Workers 전환 이전에 노드를 개발하던 기록이고, 각 노트북 마지막 저장 셀은 `src/nodes_b.py`·`nodes_cd.py`·`nodes_e.py`·`nodes_fgh.py` 를 **전환 이전 버전으로 통째로 덮어쓴다.** 저장 셀(과 그 셀을 실행하는 `validate_notebooks.py`)은 돌리지 말 것 — 돌리면 워커 래핑·재조사·동명이인 필터가 사라져 그래프가 깨진다.
 
-**Orchestrator-Workers 전환 메모**: `graph.py`는 이제 `nodes_fgh.py`가 아니라 `nodes_fg.py`/`nodes_eval.py`를 import한다. 04번 노트북을 F/G 저장 셀과 Evaluator(구 H) 저장 셀 둘로 나눠, 두 사람이 같은 노트북/파일을 동시에 건드리며 충돌하는 일이 없게 했다. `state.py`/`orchestrator.py`/`graph.py`/`config.py`는 노트북 생성물이 아니라 직접 유지보수하는 파일이다.
+**Orchestrator-Workers 전환 메모**: `graph.py`는 `nodes_fgh.py`가 아니라 `nodes_fg.py`/`nodes_eval.py`를 import한다. 전환 이후 노드는 노트북을 거치지 않고 `src/` 에서 직접 고쳤고, 배선은 `tests/test_nodes_fg.py`(가짜 LLM)로 검증한다.
 
 ***
 
@@ -216,12 +219,17 @@ pip install -r requirements.txt
 bash scripts/download_papers.sh
 ```
 
-저장소 루트에 `.env`를 만들어 키 두 개를 채운다.
+저장소 루트에 `.env`를 만들어 아래 값을 채운다. OpenAI·Tavily 키는 필수, LangSmith 는 트레이스를 남길 때만.
 
 ```
 OPENAI_API_KEY=...
 TAVILY_API_KEY=...
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=...
+LANGSMITH_PROJECT=kvcache-orchestrator
 ```
+
+셸에 다른 `OPENAI_API_KEY` 가 이미 export 돼 있으면 `load_dotenv` 가 `.env` 값을 덮어쓰지 않는다 — 401 이 나면 `env -u OPENAI_API_KEY python main.py` 로 실행한다.
 
 * 한 번에 전체 실행
 
@@ -231,9 +239,13 @@ TAVILY_API_KEY=...
   python main.py
   ```
 
-* 노드별 실습
+* 배선 테스트 (API 키 불필요)
 
-  노드별로 나눠 보려면 notebooks/01\~04를 각각 열어 위에서 아래로 실행한다. 배선 테스트 셀까지는 API 키 없이 돌아가고 실제 LLM 테스트 셀부터 키가 필요하다. 넷 다 저장을 마친 뒤 notebooks/05를 열면 전체 그래프를 조립해 실행한다. 05의 배선 재확인 셀은 가짜 객체로 전 구간을 돌려보므로 키 없이도 그래프가 성한지 확인할 수 있다.
+  ```bash
+  pytest tests -q
+  ```
+
+  노트북 01~04 의 저장 셀은 실행하지 않는다 — 위 Directory Structure 참고.
 
 실행이 끝나면 `output/final_report.md`에 보고서가 생성된다.
 첫 실행은 임베딩 모델(약 1.2GB)을 내려받느라 몇 분 걸릴 수 있다.
@@ -246,9 +258,9 @@ TAVILY_API_KEY=...
 
 * 이지영 : 기술조사 에이전트(B), 검색 편중 수정, 온디바이스 기준 TRL 판정 보강 / 보고서 품질 평가 노드(Evaluator) 개발 — 기존 형식·금칙어 검증 규칙에 Groundedness·관점 커버리지 LLM-judge를 더한 Hybrid 평가로 확장
 
-* 박태식 : 도메인 평가 에이전트(E), 보고서 형식 검증 규칙, 노드별 LLM 이원화 / 도메인 평가 에이전트(E)에 Web Search 병행 추가 — RAG 전용에서 RAG+Web Search 하이브리드로 확장(B의 TRL 7~9 보조 웹서치와 동일 패턴)
+* 박태식 : 도메인 평가 에이전트(E), 보고서 형식 검증 규칙, 노드별 LLM 이원화 / C·D·E 워커 통합과 폴백 — 공통 실행 껍데기(`worker_utils.run_worker`)로 WorkerResult 봉투·근거 공백(`evidence_gaps`) 탐지·소스 단위 재시도를 묶음, 도메인 평가 에이전트(E)에 Web Search 병행 추가 — RAG 전용에서 RAG+Web Search 하이브리드로 확장(B의 TRL 7~9 보조 웹서치와 동일 패턴)
 
-* 이헌준 : 시장성 에이전트(C), 이해관계자 에이전트(D), 평가 종합·보고서 생성·보고서 검증(F/G/H) / C·D 워커를 WorkerResult 구조로 통합, 평가 종합(Synthesizer)·보고서 생성(G)을 Orchestrator-Workers 구조에 맞게 수정
+* 이헌준 : 시장성 에이전트(C), 이해관계자 에이전트(D), 평가 종합·보고서 생성·보고서 검증(F/G/H) / Synthesizer(F)·보고서 생성(G) 재작성(`nodes_fg.py` — worker_results 집계, 실패 관점 판단보류, 분량 제한), 근거 공백 재조사(Orchestrator 2라운드 동적 재디스패치), Evaluator 장 분할 오탐 수정과 REFERENCE 출처 대조 규칙, InfiniGen 동명이인 검색 차단, 배선 테스트(`tests/`)
 
 ***
 
@@ -263,13 +275,22 @@ TAVILY_API_KEY=...
   한쪽 기술의 공개 자료가 적으면 LLM은 자연히 그 방향을 불리하게 서술하려는 경향이 있다. evidence\_status를 명시적으로 두고, F(평가 종합) 단계에서 항목×기술 근거 유무를 따로 집계해 "근거 없음이 한쪽에만 몰렸다"는 사실 자체가 편향 신호로 보고서에 드러나게 했다.
 
 * **State를 하나를 공유하되, 노드별로 완전히 분리해 병렬 개발을 실제로 가능하게 했다**
-  (Orchestrator-Workers 전환 후) market\_eval/stakeholder\_eval/domain\_eval처럼 노드마다 전용 키를 두던 방식에서, C/D/E가 동일한 `WorkerResult` 모양으로 `worker_results`에 쓰는 방식으로 바꿨다. 동적 fan-out·재시도 때문에 더 이상 "쓰는 노드가 정확히 1개"를 보장할 수 없어졌지만, `merge_results` reducer가 동시쓰기를 흡수해 노드별 분리·병렬 개발 가능성은 그대로 유지된다. 노트북(01~03, 04는 F/G와 Evaluator로 분리)을 팀원이 동시에 열어 독립적으로 개발·저장할 수 있다.
+  (Orchestrator-Workers 전환 후) market\_eval/stakeholder\_eval/domain\_eval처럼 노드마다 전용 키를 두던 방식에서, C/D/E가 동일한 `WorkerResult` 모양으로 `worker_results`에 쓰는 방식으로 바꿨다. 동적 fan-out·재시도 때문에 더 이상 "쓰는 노드가 정확히 1개"를 보장할 수 없어졌지만, `merge_results` reducer가 동시쓰기를 흡수해 노드별 분리·병렬 개발 가능성은 그대로 유지된다. 전환 단계에서는 파일 소유(백본 / 워커 / Synthesizer·G / Evaluator)로 나눠 네 명이 브랜치를 따로 올려 병합했다.
 
 ***
 
 ## Lessons Learned
 
-* **LLM-as-Judge 재검증 루프(B'/E')를 시간 관계상 못 넣었다**\
+* **(Agent 과제) LLM-judge 도 지어낸 출처를 통과시켰다 — 출처는 결정론으로 대조한다**
+  Evaluator 의 LLM-judge 가 4항목 모두 통과시킨 보고서에서 두 가지를 사람이 찾았다. REFERENCE [10] 이 이름만 같은 다른 프로젝트(프린스턴의 3D 장면 생성기 `princeton-vl/infinigen`)였고, 다음 실행에서는 [6] 「mlx-vlm Releases」가 REPORT_PROMPT 의 **예시 URL 을 그대로 베낀 것**이었다(워커가 모은 근거 어디에도 없는데 본문 4곳에 인용). RAG 과제 때 스키마 description 예시를 베낀 것과 같은 실패가 프롬프트 예시에서 되풀이됐다. 그래서 예시 URL 을 자리표시로 바꾸고, Evaluator 에 **REFERENCE 의 웹 URL 이 State 의 워커 근거에 실재하는지·중복인지·동명이인인지**를 규칙으로 대조하게 했다. 최종 실행(af868ed0)에서 이 규칙이 1·2회차에 실제로 미달을 냈고 3회차에 통과했다.
+
+* **(Agent 과제) 규칙 검사의 「통과」도 의심해야 한다**
+  첫 통합 실행에서 Evaluator 가 「기술 개요에 TRL 없음」「이해관계자 장 인용 0」으로 3회 모두 미달을 냈는데 둘 다 오탐이었다 — 장 분할이 `###` 하위 절까지 끊어 상위 장 본문이 비어 보였다. 같은 버그 때문에 **편향 통제는 4.2 하위 절을 아예 안 본 채 통과**하고 있었다. 미달만 보면 놓치는 종류다.
+
+* **(Agent 과제) 재조사가 빈칸을 채우지는 못했다**
+  근거 공백 재조사는 의도대로 돌았지만(2라운드 C·D·E, 항목별 표적 검색어), 최종 실행에서 빈칸 수는 C 1→1, D 1→1, E 5→5 로 하나도 줄지 않았다. 같은 검색 도구·같은 문헌 풀에 표적 검색어만 바꿔 다시 물어서는 없는 근거가 나오지 않는다. 재조사가 의미를 가지려면 **다른 소스**(다른 검색 엔진·공식 저장소 API·벤더 문서)를 붙이거나, 공백을 「근거 없음」으로 확정하고 재조사 비용을 쓰지 않는 쪽이 낫다 — 동작 실증과 효과는 따로 재야 한다.
+
+* **(RAG 과제) LLM-as-Judge 재검증 루프(B'/E')를 시간 관계상 못 넣었다** — Agent 과제에서 Evaluator 에 LLM-judge 를 붙여 일부 해소\
   **이게 남긴 진짜 한계:**
   B(기술조사)·E(도메인평가)가 검색해온 근거를 LLM이 구조화 스키마에 맞춰 "그럴듯하게" 채우면, 그 내용이 논문을 정확히 반영했는지 검증하는 단계가 없다. H(보고서 검증)는 챕터 존재·서열 표현 같은 **형식**만 규칙으로 검사할 뿐 **근거가 실제로 맞는지(사실성)** 는 못 걸러낸다. 즉 "구조는 맞는데 내용은 틀린" 보고서가 그대로 통과될 수 있다는 게 현재 파이프라인이 못 막는 지점이다. 시간이 더 있었다면 검색된 근거와 판정 문장을 LLM-as-Judge로 대조해, 근거에 없는 내용이 들어가면 재검색·재판정하도록 만드는 게 다음 우선순위였을 것이다.
 
